@@ -79,22 +79,41 @@ avoid them (for example comparing against a key instead of storing it, or
 reusing an existing CPI call site). Treat a clean report as "nothing obvious
 changed", not as proof of safety. Known gaps are tracked as GitHub issues.
 
-### 3. Public, hash-linked attestation ledger · Shipped (live on devnet)
-An Anchor program (`tidemark-ledger`) records each review on Solana.
-- **Hash-linked PDAs**: each attestation stores program, old and new code hash,
-  report hash, risk, rule version, model id, reviewer and slot, plus the previous
-  entry's hash. `entry_hash = sha256(fields ‖ prev_hash)`.
-- **Independent verification**: `tidemark verify-ledger` rebuilds the chain
-  from raw account data and detects edited, deleted, reordered or truncated
-  entries, using any Solana RPC you choose.
-- **Signed entries**: every attestation records the key that signed it.
-- **Canonical report hashing**: reports are hashed as sorted-key JSON, so for an
-  unmodified report file the hash `diff` prints is the one `attest` publishes.
+### 3. Quorum-signed attestation ledger · Shipped (live on devnet)
+An Anchor program (`tidemark-ledger` v2) records reviews on Solana. Who may
+speak for a registry is enforced by the contract itself, not by trusting
+whoever holds a key file.
+- **Reviewer allowlist**: only keys the registry authority adds on-chain
+  (a `Reviewer` PDA per key) can attest or approve. Anyone else is rejected by
+  the program.
+- **k-of-n quorum**: each entry records the threshold in force when it was
+  created. Other reviewers co-sign with `approve`, one `Approval` PDA each, so
+  nobody can vote twice. An entry is *final* once it reaches k approvals. The
+  threshold can never exceed the number of active reviewers.
+- **Independent re-review**: `attest` fetches the deployed program from chain
+  and runs the diff itself; `approve` re-runs the whole review on the
+  approver's machine and refuses to co-sign unless it reaches the same verdict.
+  A quorum therefore means k reviewers got the same answer on their own.
+- **Deterministic verdict hash**: what is attested covers the rules version,
+  both code hashes, the findings and the risk, and leaves out timing-dependent
+  parts of the report, so honest reviewers on different hardware agree.
+- **Two-step authority rotation**: the authority proposes a successor, who
+  must sign to accept. A typo can't hand a registry away, and a lost key can be
+  replaced before it matters.
+- **Sponsored fees**: a separate payer covers rent and fees, so reviewer keys
+  never need to hold SOL.
+- **Hash-linked entries**: `entry_hash = sha256(index ‖ registry ‖ program ‖
+  code hashes ‖ verdict ‖ risk ‖ rules ‖ model ‖ reviewer ‖ slot ‖ prev_hash)`.
+- **Checked verification**: `tidemark verify-ledger` checks account owners,
+  re-derives the registry, entry and approval PDAs, confirms every signer is a
+  listed reviewer, counts approvals, requires slots to increase, and
+  cross-checks the chain head across every `--rpc` you pass.
+- **Confirmed writes**: every transaction is polled until confirmed, and a
+  failed one is reported as a failure.
 
-Current trust assumptions, being addressed in the contract hardening milestone:
-the ledger program on devnet is upgradeable by a single key; any key can
-currently append to any registry; `attest` takes the report file as given
-rather than re-running the diff; and verification trusts the RPC you query.
+Remaining trust assumption: the ledger program on devnet is still upgradeable
+by a single key (tracked in #15, to move behind a multisig with a timelock or
+be frozen).
 
 ### 4. CI gate for safe code shipping · Shipped
 `tidemark diff` exits with code `2` on High or Critical findings, so a pipeline
@@ -193,35 +212,49 @@ legibility.
 
 ## Live on devnet
 
-The full flow has run on Solana devnet: deploy a vault, snapshot it, upgrade it
-on-chain to the backdoored build, fetch the new bytecode from chain, review it,
-and publish the review to the ledger.
+The ledger v2 program runs on devnet, and a real upgrade has gone through the
+full quorum flow: deploy a vault, snapshot it, upgrade it on-chain to the
+backdoored build, have reviewer 1 attest, and have reviewer 2 independently
+re-review and co-sign.
 
 | What | Address |
 |---|---|
-| Ledger program | [`BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc`](https://explorer.solana.com/address/BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc?cluster=devnet) |
+| Ledger program (v2) | [`BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc`](https://explorer.solana.com/address/BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc?cluster=devnet) |
 | Demo vault (upgraded to v2) | [`5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3`](https://explorer.solana.com/address/5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3?cluster=devnet) |
-| Reviewer registry | [`BEeLrroZNSULfZuSUQuneuzetKXtKMvkmPtuH7x7k6qK`](https://explorer.solana.com/address/BEeLrroZNSULfZuSUQuneuzetKXtKMvkmPtuH7x7k6qK?cluster=devnet) |
-| Attestation #0 | [`84BquZaNLSjHpNY5Ccz2AkyK9wHv2jnj2tZGDNoZWv3R`](https://explorer.solana.com/address/84BquZaNLSjHpNY5Ccz2AkyK9wHv2jnj2tZGDNoZWv3R?cluster=devnet) |
+| Registry (2-of-2) | [`72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU`](https://explorer.solana.com/address/72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU?cluster=devnet) |
+| Reviewer 1 | [`9fxLpiKzK1zeF42911g5ruKDdTuJFduJSEXcZHh4mCB1`](https://explorer.solana.com/address/9fxLpiKzK1zeF42911g5ruKDdTuJFduJSEXcZHh4mCB1?cluster=devnet) |
+| Reviewer 2 | [`BWueozAMDiJxxvc96NC8tnfHRKxeyKhB39kS13nzq9Np`](https://explorer.solana.com/address/BWueozAMDiJxxvc96NC8tnfHRKxeyKhB39kS13nzq9Np?cluster=devnet) |
+| Entry #0 | [`ak6XANj3vkFQz1EGsVHzc2CLC9vF8CbB9rbTB2SFaKd`](https://explorer.solana.com/address/ak6XANj3vkFQz1EGsVHzc2CLC9vF8CbB9rbTB2SFaKd?cluster=devnet) |
 
 | Step | Transaction |
 |---|---|
-| Vault v1 deploy | [`4VmsbXQv…`](https://explorer.solana.com/tx/4VmsbXQv5LVP45XnfwUkmDKXocu9SsMuvraSn1baexCwJuJspTPEQUxAxtsmPHhPR6tEt8HZcqdKMgnxGRW9z1Tc?cluster=devnet) |
-| Upgrade to backdoored v2 | [`4YxnJMQY…`](https://explorer.solana.com/tx/4YxnJMQYyRrNEPtQgrvLSfy4CGpK7zC7yUiHa6PzJJkcDvbBAkLmUgTCad1ipJ4Q2oThmeCHkZQTipXJALVCcRyA?cluster=devnet) |
-| Registry created | [`pNqQHuwt…`](https://explorer.solana.com/tx/pNqQHuwtVFPpriTyR75mXSoWQdCbVfWu6ncoRCMVxPEZgmWpC65tDBseranVdhATchz8n4T7z79AfnC9kzqPhxd?cluster=devnet) |
-| Review attested (risk High) | [`28MK4nNB…`](https://explorer.solana.com/tx/28MK4nNBorrSTJ7m5BpjDBs1DBGjFRe3Y5R1M157kknx7DDCzPdJAmpjW7ePyT7jfneteLUp5cDrrSrkmhA4mAvL?cluster=devnet) |
+| Vault upgraded to backdoored v2 | [`4YxnJMQY…`](https://explorer.solana.com/tx/4YxnJMQYyRrNEPtQgrvLSfy4CGpK7zC7yUiHa6PzJJkcDvbBAkLmUgTCad1ipJ4Q2oThmeCHkZQTipXJALVCcRyA?cluster=devnet) |
+| Ledger upgraded to v2 | [`2ERLV1b7…`](https://explorer.solana.com/tx/2ERLV1b7gxv7LooeZBWwVYEAt5zruehKugXzWTrTXEPJGEfNFR1UqBheXcW67qboXBqrKpRGkZkTHJx6uM6reYjt?cluster=devnet) |
+| Registry created | [`5bwesoG5…`](https://explorer.solana.com/tx/5bwesoG5rLpfdV2PLN7RhaYebP5R52q1AEJ8pQjitcXCVUfYQp5S35hUGhniJbkY1HCNXaqWsjnChXQXCYiVwxAx?cluster=devnet) |
+| Reviewers added | [`542j9ayK…`](https://explorer.solana.com/tx/542j9ayKKxDUriUzwgqEqhqXifRYFg89g6spcC3YPnyNG83YBe3M558vgzGwebYwNgsE59q9J5hkBwwRhtERE2Lq?cluster=devnet) [`5DWDvHh8…`](https://explorer.solana.com/tx/5DWDvHh8NRb9WjRYuXwvHRdpVVujUpHPRWAVfA9RLqX9bEQtUdpHNgUcqzUzT8KLX67BPgGZMtvb1WUvgicanNiB?cluster=devnet) |
+| Threshold set to 2 | [`4Lir1M6v…`](https://explorer.solana.com/tx/4Lir1M6vkHrJzTAAjgwWcUtpwLhXaK7yhTJ3DgMBcz5k8tEfqcjJvSJjLtCuTNa5W1LUrZNz3D5Zw37FmMDdkLz1?cluster=devnet) |
+| Reviewer 1 attests (1/2, pending) | [`3LEvQwNJ…`](https://explorer.solana.com/tx/3LEvQwNJ4CJDjX8AwpXeri3LtyRCm3GHTsfeQwXPdAPhSAcawx5Dkv58XSSg5QRCG9arHxmwZ4Nh1Chdz3SL8TZx?cluster=devnet) |
+| Reviewer 2 re-reviews and approves (2/2, final) | [`6sJWSnwV…`](https://explorer.solana.com/tx/6sJWSnwV7vbjwPKYV36K2GsKyzKcyR3fsGd9j2Du32h3XwJnekd6qme3bLkRGH1ppezXkJYuNH22mB4DTFt6QM8?cluster=devnet) |
 
-The attestation stores old code hash `99e7c4fe…`, new code hash `519015fa…`
-and report hash `acddec1b…`, the values `tidemark diff` printed when it was
-attested (rules 0.2). Later report formats add fields, so a fresh run hashes
-differently; the code hashes stay the same.
-Check it yourself:
+Both reviewers independently computed verdict `30204461…0d31` (risk High).
+On the same registry, a key that isn't on the allowlist was refused by the
+program, and a second approval from reviewer 2 was refused too.
 
 ```sh
-cargo run -p tidemark-cli -- verify-ledger   --program BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc   --registry BEeLrroZNSULfZuSUQuneuzetKXtKMvkmPtuH7x7k6qK
+cargo run -p tidemark-cli -- verify-ledger \
+  --program BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc \
+  --registry 72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU
 ```
 
-Rerun the flow on any program you control with `scripts/demo-devnet.sh`.
+```
+threshold  2 of 2 active reviewers
+  #0   slot 519460795  risk 3  program 5pHT…7aX3  by 9fxL…mCB1  2/2 final
+https://api.devnet.solana.com: chain OK, 1 entries, head a47556f807496f9a
+```
+
+The first ledger version's registry (`BEeLrro…`) and entry (`84BquZa…`) remain
+on devnet as legacy records; v2 uses new account types and seeds and does not
+read them.
 
 ## Repository layout
 
@@ -242,9 +275,10 @@ docs/architecture/       HLD.md, LLD.md
 # review the demo upgrade (v1 → backdoored v2)
 cargo run -p tidemark-cli -- diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so --json report.json
 
-# publish the review on devnet
-cargo run -p tidemark-cli -- init-registry --ledger <LEDGER_PROGRAM_ID>
-cargo run -p tidemark-cli -- attest report.json --program <REVIEWED_PROGRAM_ID> --ledger <LEDGER_PROGRAM_ID>
+# publish a review of a deployed upgrade (snapshot taken before the upgrade)
+cargo run -p tidemark-cli -- init-registry --ledger <LEDGER> --threshold 1
+cargo run -p tidemark-cli -- add-reviewer --ledger <LEDGER> <YOUR_KEY>
+cargo run -p tidemark-cli -- attest --ledger <LEDGER> --program <PROGRAM> --old before.so
 
 # anyone can verify the chain
 cargo run -p tidemark-cli -- verify-ledger --program <LEDGER_PROGRAM_ID> --registry <REGISTRY>
@@ -257,12 +291,18 @@ cargo run -p tidemark-cli -- fetch <PROGRAM_ID> -o program.so
 
 | Command | Purpose |
 |---|---|
-| `diff OLD NEW` | Review an upgrade; `--json` writes the full report |
+| `diff OLD NEW` | Review an upgrade locally; `--json` writes the full report |
 | `inspect FILE` | Summarize one binary |
 | `fetch PROGRAM_ID` | Download deployed bytecode and show its upgrade authority |
-| `init-registry` | Create your reviewer registry on the ledger |
-| `attest REPORT` | Publish a report's hash as the next ledger entry |
-| `verify-ledger` | Rebuild and check a registry's hash chain |
+| `init-registry --threshold K` | Create a registry you control |
+| `add-reviewer KEY` / `set-reviewer KEY --active BOOL` | Manage who may attest |
+| `set-threshold K` | Change how many approvals make an entry final |
+| `propose-authority KEY` / `accept-authority` | Hand a registry to a new key in two steps |
+| `attest --program ID --old SNAPSHOT` | Review the deployed upgrade and publish the verdict |
+| `approve --registry R --index N --old SNAPSHOT` | Re-run a published review and co-sign if it matches |
+| `verify-ledger --registry R [--rpc URL]...` | Check chain, reviewers, approvals and PDAs |
+
+Chain commands take `--keypair` (the signer) and an optional `--payer`.
 
 ### Building and verifying
 

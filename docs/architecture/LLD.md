@@ -127,31 +127,74 @@ says the hunks are approximate.
 | `inspect FILE` | hash, size, syscalls, callx, constants, security.txt | 0 |
 | `fetch PROGRAM_ID --rpc URL -o FILE` | writes ELF, prints authority and last deploy slot | 0 |
 
-## 4. tidemark-ledger
+## 4. tidemark-ledger (v2)
 
 ### 4.1 Accounts
 
 | Account | Seeds | Fields |
 |---|---|---|
-| Registry | `["registry", authority]` | authority, name, count, last_hash, bump |
-| Attestation | `["attest", registry, count_le]` | registry, index, program, old_code_hash, new_code_hash, report_hash, risk, rules_version, model_id, reviewer, slot, prev_hash, entry_hash, bump |
+| RegistryV2 | `["registry2", authority]` | authority, pending_authority, name, count, last_hash, threshold, active_reviewers, bump |
+| Reviewer | `["reviewer", registry, key]` | registry, key, active, added_slot, bump |
+| AttestationV2 | `["attest2", registry, count_le]` | registry, index, program, old_code_hash, new_code_hash, report_hash (verdict), risk, rules_version, model_id, reviewer, slot, prev_hash, entry_hash, threshold, approvals, bump |
+| Approval | `["approval", attestation, reviewer]` | attestation, reviewer, slot, bump |
 
 ### 4.2 Instructions
 
-- `init_registry(name)`: creates the signer's registry.
-- `attest(args)`: permissionless; the reviewer signs and pays. Checks
-  `risk <= 4`, fills the attestation, links `prev_hash`, computes
-  `entry_hash`, advances the registry and emits `Attested`.
+| Instruction | Signers | Checks |
+|---|---|---|
+| `init_registry(name, threshold)` | authority, payer | threshold ≥ 1 |
+| `add_reviewer(key)` | authority, payer | `has_one = authority`; Reviewer PDA must not exist |
+| `set_reviewer_active(active)` | authority | deactivating may not drop active reviewers below the threshold |
+| `set_threshold(k)` | authority | 1 ≤ k ≤ active reviewers |
+| `propose_authority(key)` | authority | |
+| `accept_authority()` | pending authority | signer equals `pending_authority`, which is non-default |
+| `attest(args)` | reviewer, payer | Reviewer PDA for the signer exists and is active; risk ≤ 4; creates the entry and the submitter's Approval |
+| `approve(report_hash)` | reviewer, payer | active Reviewer; entry belongs to the registry; hash equals the entry's; Approval PDA must not exist |
+
+The payer is a separate signer everywhere rent is paid, so reviewers need no SOL.
 
 ### 4.3 Hash chain
 
 ```
-entry_hash = sha256( index_le ‖ program ‖ old_code_hash ‖ new_code_hash ‖
-                     report_hash ‖ risk ‖ rules_version ‖ model_id ‖
-                     reviewer ‖ prev_hash )
+entry_hash = sha256( index_le ‖ registry ‖ program ‖ old_code_hash ‖
+                     new_code_hash ‖ report_hash ‖ risk ‖ rules_version ‖
+                     model_id ‖ reviewer ‖ slot_le ‖ prev_hash )
 ```
 
-The first entry uses 32 zero bytes as `prev_hash`.
+`approvals` is excluded because it changes after creation; it is checked
+against the Approval accounts instead. The first entry uses 32 zero bytes as
+`prev_hash`.
+
+### 4.4 Verdict hash
+
+`report_hash` on-chain is `sha256(canonical_json(verdict))`, where `verdict`
+is `{rules_version, old, new, risk, findings}` with TM-CHURN removed and risk
+recomputed from the remaining findings. Hunks, churn and `diff_exact` depend on
+the diff deadline and machine speed, so they are left out to keep independent
+reviewers in agreement.
+
+### 4.5 Off-chain verification (`ledger.rs`)
+
+1. Registry account owner is the ledger program and its address equals
+   `PDA("registry2", authority)`.
+2. Entries are fetched with `getProgramAccounts` (dataSize + registry memcmp),
+   sorted by index, and must be contiguous from 0.
+3. Each entry's address equals `PDA("attest2", registry, index)`, its
+   `registry` field matches, `prev_hash` links, `entry_hash` recomputes, and
+   slots never decrease.
+4. The submitter and every approver must be Reviewer accounts of this registry;
+   each Approval address equals `PDA("approval", entry, reviewer)`; approvers
+   are unique; their count equals `approvals` and includes the submitter.
+5. The last entry equals `registry.last_hash` and the count matches.
+6. With several `--rpc` values the chain head must agree across all of them.
+
+### 4.6 Transactions (`submit.rs`)
+
+Messages are compiled by hand: payer first, then writable signers, read-only
+signers, writable non-signers and read-only non-signers, with header counts
+derived from those groups. Every listed signer must provide a key or signing
+fails. After `sendTransaction` the client polls `getSignatureStatuses` for up
+to 60 s and fails on any `err`.
 
 ## 5. Demo fixture
 

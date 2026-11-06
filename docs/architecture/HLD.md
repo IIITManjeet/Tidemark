@@ -91,9 +91,18 @@ Anyone reads the registry, walks attestations in index order, recomputes each
 - Program bytes, `.rodata` strings and security.txt are untrusted. They are
   parsed, never executed, and never given to an LLM as instructions.
 - LLM output is advisory. A finding exists only if a deterministic rule
-  produced it; the model explains, it does not decide.
-- Attestations are signed by the reviewer and chained, so edits or deletions
-  are detectable. They record who reviewed what, not that code is safe.
+  produced it.
+- Write access to a registry is enforced on-chain: only allowlisted reviewers
+  can attest or approve, and only the authority manages that list. Authority
+  changes need the new key's signature.
+- An entry is final only when k distinct reviewers have each re-run the review
+  and reached the same verdict hash.
+- Entries are hash-linked and bound to their registry and slot, so edits,
+  deletions and reordering are detectable by anyone with an RPC endpoint.
+  Cross-checking several RPCs reduces trust in any single provider.
+- Open item: the ledger program's own upgrade authority is a single key on
+  devnet. Production deployments should put it behind a multisig with a
+  timelock or make the program immutable.
 
 ## 7. Cost model
 
