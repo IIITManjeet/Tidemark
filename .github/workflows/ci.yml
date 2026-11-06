@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace
+      - name: Review demo upgrade (fails on High/Critical, which is expected for the fixture)
+        run: |
+          set +e
+          cargo run -q -p tidemark-cli -- diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
+          test $? -eq 2
