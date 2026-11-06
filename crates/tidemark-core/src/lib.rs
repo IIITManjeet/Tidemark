@@ -1,6 +1,7 @@
 pub mod diff;
 pub mod disasm;
 pub mod elf;
+pub mod rpc;
 pub mod syscalls;
 
 pub fn report_hash(report: &diff::Report) -> String {
