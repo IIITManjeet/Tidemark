@@ -4,6 +4,7 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 
 pub type Pubkey = [u8; 32];
 pub const SYSTEM_PROGRAM: Pubkey = [0u8; 32];
@@ -17,8 +18,11 @@ pub fn decode_pubkey(s: &str) -> Result<Pubkey> {
 }
 
 pub fn load_keypair(path: &str) -> Result<SigningKey> {
-    let raw =
-        std::fs::read_to_string(path).with_context(|| format!("cannot read keypair {path}"))?;
+    let meta = std::fs::metadata(path).with_context(|| format!("cannot read keypair {path}"))?;
+    if meta.len() > 4096 {
+        bail!("{path} is too large to be a keypair file");
+    }
+    let raw = std::fs::read_to_string(path)?;
     let bytes: Vec<u8> =
         serde_json::from_str(&raw).context("keypair file must be a JSON byte array")?;
     if bytes.len() != 64 {
@@ -30,6 +34,10 @@ pub fn load_keypair(path: &str) -> Result<SigningKey> {
         bail!("keypair public half does not match its secret");
     }
     Ok(key)
+}
+
+pub fn pubkey_of(k: &SigningKey) -> Pubkey {
+    *k.verifying_key().as_bytes()
 }
 
 fn on_curve(b: &Pubkey) -> bool {
@@ -53,7 +61,7 @@ pub fn find_pda(seeds: &[&[u8]], program: &Pubkey) -> Result<(Pubkey, u8)> {
     bail!("no viable bump for PDA")
 }
 
-fn sighash(name: &str) -> [u8; 8] {
+pub fn sighash(name: &str) -> [u8; 8] {
     Sha256::digest(format!("global:{name}").as_bytes())[..8]
         .try_into()
         .expect("8 bytes")
@@ -73,126 +81,344 @@ fn compact_u16(mut n: usize, out: &mut Vec<u8>) {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Meta {
     pub key: Pubkey,
     pub signer: bool,
     pub writable: bool,
 }
 
-fn build_tx(
-    payer: &SigningKey,
+impl Meta {
+    pub fn w(key: Pubkey) -> Self {
+        Meta {
+            key,
+            signer: false,
+            writable: true,
+        }
+    }
+    pub fn r(key: Pubkey) -> Self {
+        Meta {
+            key,
+            signer: false,
+            writable: false,
+        }
+    }
+    pub fn s(key: Pubkey) -> Self {
+        Meta {
+            key,
+            signer: true,
+            writable: false,
+        }
+    }
+    pub fn sw(key: Pubkey) -> Self {
+        Meta {
+            key,
+            signer: true,
+            writable: true,
+        }
+    }
+}
+
+pub struct Compiled {
+    pub message: Vec<u8>,
+    pub signers: Vec<Pubkey>,
+}
+
+pub fn compile(
+    payer: Pubkey,
     program: Pubkey,
     metas: &[Meta],
     data: &[u8],
     blockhash: Pubkey,
-) -> Vec<u8> {
-    let payer_pk: Pubkey = *payer.verifying_key().as_bytes();
-    let mut keys: Vec<Pubkey> = vec![payer_pk];
-    for m in metas.iter().filter(|m| m.writable && m.key != payer_pk) {
-        if !keys.contains(&m.key) {
-            keys.push(m.key);
+) -> Result<Compiled> {
+    let mut merged: Vec<Meta> = vec![Meta::sw(payer)];
+    for m in metas.iter().chain(std::iter::once(&Meta::r(program))) {
+        match merged.iter_mut().find(|x| x.key == m.key) {
+            Some(x) => {
+                x.signer |= m.signer;
+                x.writable |= m.writable;
+            }
+            None => merged.push(*m),
         }
     }
-    let writable_count = keys.len();
-    for m in metas.iter().filter(|m| !m.writable && m.key != payer_pk) {
-        if !keys.contains(&m.key) {
-            keys.push(m.key);
-        }
+    if merged
+        .iter()
+        .any(|m| m.key == program && (m.signer || m.writable))
+    {
+        bail!("program id cannot be a signer or writable");
     }
-    if !keys.contains(&program) {
-        keys.push(program);
+    let group = |m: &Meta| match (m.signer, m.writable) {
+        (true, true) => 0,
+        (true, false) => 1,
+        (false, true) => 2,
+        (false, false) => 3,
+    };
+    let payer_first = merged.remove(0);
+    merged.sort_by_key(group);
+    merged.insert(0, payer_first);
+    if merged.len() > 255 {
+        bail!("too many accounts");
     }
-    let readonly_unsigned = keys.len() - writable_count;
 
-    let mut msg = vec![1u8, 0u8, readonly_unsigned as u8];
-    compact_u16(keys.len(), &mut msg);
-    for k in &keys {
-        msg.extend_from_slice(k);
+    let signers: Vec<Pubkey> = merged.iter().filter(|m| m.signer).map(|m| m.key).collect();
+    let ro_signed = merged.iter().filter(|m| m.signer && !m.writable).count();
+    let ro_unsigned = merged.iter().filter(|m| !m.signer && !m.writable).count();
+    let index = |k: &Pubkey| {
+        merged
+            .iter()
+            .position(|m| m.key == *k)
+            .expect("key present") as u8
+    };
+
+    let mut msg = vec![signers.len() as u8, ro_signed as u8, ro_unsigned as u8];
+    compact_u16(merged.len(), &mut msg);
+    for m in &merged {
+        msg.extend_from_slice(&m.key);
     }
     msg.extend_from_slice(&blockhash);
     compact_u16(1, &mut msg);
-    msg.push(
-        keys.iter()
-            .position(|k| *k == program)
-            .expect("program in keys") as u8,
-    );
+    msg.push(index(&program));
     compact_u16(metas.len(), &mut msg);
     for m in metas {
-        msg.push(keys.iter().position(|k| *k == m.key).expect("meta in keys") as u8);
+        msg.push(index(&m.key));
     }
     compact_u16(data.len(), &mut msg);
     msg.extend_from_slice(data);
+    Ok(Compiled {
+        message: msg,
+        signers,
+    })
+}
 
-    let sig = payer.sign(&msg);
-    let mut tx = Vec::with_capacity(1 + 64 + msg.len());
-    compact_u16(1, &mut tx);
-    tx.extend_from_slice(&sig.to_bytes());
-    tx.extend_from_slice(&msg);
-    tx
+pub fn sign(c: &Compiled, keys: &[&SigningKey]) -> Result<Vec<u8>> {
+    let mut tx = Vec::new();
+    compact_u16(c.signers.len(), &mut tx);
+    for s in &c.signers {
+        let k = keys
+            .iter()
+            .find(|k| pubkey_of(k) == *s)
+            .with_context(|| format!("missing signature for {}", bs58::encode(s).into_string()))?;
+        tx.extend_from_slice(&k.sign(&c.message).to_bytes());
+    }
+    tx.extend_from_slice(&c.message);
+    Ok(tx)
 }
 
 fn rpc(url: &str, method: &str, params: Value) -> Result<Value> {
     crate::rpc::call(url, method, params)
 }
 
-fn send(
-    url: &str,
-    payer: &SigningKey,
-    program: Pubkey,
-    metas: &[Meta],
-    data: &[u8],
-) -> Result<String> {
-    let bh = rpc(
-        url,
-        "getLatestBlockhash",
-        json!([{"commitment":"confirmed"}]),
-    )?;
-    let blockhash = decode_pubkey(bh["value"]["blockhash"].as_str().context("no blockhash")?)?;
-    let tx = build_tx(payer, program, metas, data, blockhash);
-    let b64 = base64::engine::general_purpose::STANDARD.encode(tx);
-    let sig = rpc(
-        url,
-        "sendTransaction",
-        json!([b64, {"encoding":"base64","preflightCommitment":"confirmed"}]),
-    )?;
-    Ok(sig.as_str().unwrap_or_default().to_string())
+fn confirm(url: &str, sig: &str) -> Result<()> {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(60) {
+        let r = rpc(url, "getSignatureStatuses", json!([[sig]]))?;
+        let st = &r["value"][0];
+        if !st.is_null() {
+            if !st["err"].is_null() {
+                bail!("transaction {sig} failed: {}", st["err"]);
+            }
+            if matches!(
+                st["confirmationStatus"].as_str(),
+                Some("confirmed" | "finalized")
+            ) {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(800));
+    }
+    bail!("transaction {sig} was not confirmed within 60 s")
 }
 
-pub fn registry_address(ledger: &Pubkey, authority: &Pubkey) -> Result<Pubkey> {
-    Ok(find_pda(&[b"registry", authority], ledger)?.0)
+pub struct Ctx<'a> {
+    pub url: &'a str,
+    pub ledger: Pubkey,
+    pub payer: &'a SigningKey,
 }
 
-pub fn init_registry(
-    url: &str,
-    ledger: Pubkey,
-    payer: &SigningKey,
-    name: &str,
-) -> Result<(Pubkey, String)> {
-    let auth: Pubkey = *payer.verifying_key().as_bytes();
-    let registry = registry_address(&ledger, &auth)?;
-    let mut n = [0u8; 32];
-    let nb = name.as_bytes();
-    n[..nb.len().min(32)].copy_from_slice(&nb[..nb.len().min(32)]);
-    let mut data = sighash("init_registry").to_vec();
-    data.extend_from_slice(&n);
-    let metas = [
-        Meta {
-            key: registry,
-            signer: false,
-            writable: true,
-        },
-        Meta {
-            key: auth,
-            signer: true,
-            writable: true,
-        },
-        Meta {
-            key: SYSTEM_PROGRAM,
-            signer: false,
-            writable: false,
-        },
-    ];
-    Ok((registry, send(url, payer, ledger, &metas, &data)?))
+impl Ctx<'_> {
+    fn send(&self, signer: &SigningKey, metas: &[Meta], data: &[u8]) -> Result<String> {
+        let bh = rpc(
+            self.url,
+            "getLatestBlockhash",
+            json!([{"commitment": "confirmed"}]),
+        )?;
+        let blockhash = decode_pubkey(bh["value"]["blockhash"].as_str().context("no blockhash")?)?;
+        let c = compile(pubkey_of(self.payer), self.ledger, metas, data, blockhash)?;
+        let tx = sign(&c, &[self.payer, signer])?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(tx);
+        let sig = rpc(
+            self.url,
+            "sendTransaction",
+            json!([b64, {"encoding": "base64", "preflightCommitment": "confirmed"}]),
+        )?;
+        let sig = sig
+            .as_str()
+            .context("sendTransaction returned no signature")?
+            .to_string();
+        confirm(self.url, &sig)?;
+        Ok(sig)
+    }
+
+    pub fn registry_address(&self, authority: &Pubkey) -> Result<Pubkey> {
+        Ok(find_pda(&[b"registry2", authority], &self.ledger)?.0)
+    }
+
+    pub fn reviewer_address(&self, registry: &Pubkey, key: &Pubkey) -> Result<Pubkey> {
+        Ok(find_pda(&[b"reviewer", registry, key], &self.ledger)?.0)
+    }
+
+    pub fn attestation_address(&self, registry: &Pubkey, index: u64) -> Result<Pubkey> {
+        Ok(find_pda(&[b"attest2", registry, &index.to_le_bytes()], &self.ledger)?.0)
+    }
+
+    pub fn approval_address(&self, attestation: &Pubkey, reviewer: &Pubkey) -> Result<Pubkey> {
+        Ok(find_pda(&[b"approval", attestation, reviewer], &self.ledger)?.0)
+    }
+
+    pub fn init_registry(
+        &self,
+        authority: &SigningKey,
+        name: &str,
+        threshold: u8,
+    ) -> Result<(Pubkey, String)> {
+        let auth = pubkey_of(authority);
+        let registry = self.registry_address(&auth)?;
+        let mut n = [0u8; 32];
+        let mut end = name.len().min(32);
+        while !name.is_char_boundary(end) {
+            end -= 1;
+        }
+        n[..end].copy_from_slice(&name.as_bytes()[..end]);
+        let mut d = sighash("init_registry").to_vec();
+        d.extend_from_slice(&n);
+        d.push(threshold);
+        let metas = [
+            Meta::w(registry),
+            Meta::s(auth),
+            Meta::sw(pubkey_of(self.payer)),
+            Meta::r(SYSTEM_PROGRAM),
+        ];
+        Ok((registry, self.send(authority, &metas, &d)?))
+    }
+
+    pub fn add_reviewer(&self, authority: &SigningKey, key: Pubkey) -> Result<String> {
+        let auth = pubkey_of(authority);
+        let registry = self.registry_address(&auth)?;
+        let reviewer = self.reviewer_address(&registry, &key)?;
+        let mut d = sighash("add_reviewer").to_vec();
+        d.extend_from_slice(&key);
+        let metas = [
+            Meta::w(registry),
+            Meta::w(reviewer),
+            Meta::s(auth),
+            Meta::sw(pubkey_of(self.payer)),
+            Meta::r(SYSTEM_PROGRAM),
+        ];
+        self.send(authority, &metas, &d)
+    }
+
+    pub fn set_reviewer_active(
+        &self,
+        authority: &SigningKey,
+        key: Pubkey,
+        active: bool,
+    ) -> Result<String> {
+        let auth = pubkey_of(authority);
+        let registry = self.registry_address(&auth)?;
+        let reviewer = self.reviewer_address(&registry, &key)?;
+        let mut d = sighash("set_reviewer_active").to_vec();
+        d.push(active as u8);
+        self.send(
+            authority,
+            &[Meta::w(registry), Meta::w(reviewer), Meta::s(auth)],
+            &d,
+        )
+    }
+
+    pub fn set_threshold(&self, authority: &SigningKey, threshold: u8) -> Result<String> {
+        let auth = pubkey_of(authority);
+        let registry = self.registry_address(&auth)?;
+        let mut d = sighash("set_threshold").to_vec();
+        d.push(threshold);
+        self.send(authority, &[Meta::w(registry), Meta::s(auth)], &d)
+    }
+
+    pub fn propose_authority(
+        &self,
+        authority: &SigningKey,
+        new_authority: Pubkey,
+    ) -> Result<String> {
+        let auth = pubkey_of(authority);
+        let registry = self.registry_address(&auth)?;
+        let mut d = sighash("propose_authority").to_vec();
+        d.extend_from_slice(&new_authority);
+        self.send(authority, &[Meta::w(registry), Meta::s(auth)], &d)
+    }
+
+    pub fn accept_authority(&self, new_authority: &SigningKey, registry: Pubkey) -> Result<String> {
+        let d = sighash("accept_authority").to_vec();
+        self.send(
+            new_authority,
+            &[Meta::w(registry), Meta::s(pubkey_of(new_authority))],
+            &d,
+        )
+    }
+
+    pub fn attest(
+        &self,
+        signer: &SigningKey,
+        registry: Pubkey,
+        a: &AttestInput,
+    ) -> Result<(Pubkey, u64, String)> {
+        let reg = crate::ledger::fetch_registry(
+            self.url,
+            &bs58::encode(self.ledger).into_string(),
+            &bs58::encode(registry).into_string(),
+        )?;
+        let me = pubkey_of(signer);
+        let attestation = self.attestation_address(&registry, reg.count)?;
+        let mut d = sighash("attest").to_vec();
+        d.extend_from_slice(&a.program);
+        d.extend_from_slice(&a.old_code_hash);
+        d.extend_from_slice(&a.new_code_hash);
+        d.extend_from_slice(&a.report_hash);
+        d.push(a.risk);
+        d.extend_from_slice(&a.rules_version);
+        d.extend_from_slice(&a.model_id);
+        let metas = [
+            Meta::w(registry),
+            Meta::r(self.reviewer_address(&registry, &me)?),
+            Meta::w(attestation),
+            Meta::w(self.approval_address(&attestation, &me)?),
+            Meta::s(me),
+            Meta::sw(pubkey_of(self.payer)),
+            Meta::r(SYSTEM_PROGRAM),
+        ];
+        Ok((attestation, reg.count, self.send(signer, &metas, &d)?))
+    }
+
+    pub fn approve(
+        &self,
+        signer: &SigningKey,
+        registry: Pubkey,
+        index: u64,
+        report_hash: [u8; 32],
+    ) -> Result<String> {
+        let me = pubkey_of(signer);
+        let attestation = self.attestation_address(&registry, index)?;
+        let mut d = sighash("approve").to_vec();
+        d.extend_from_slice(&report_hash);
+        let metas = [
+            Meta::r(registry),
+            Meta::r(self.reviewer_address(&registry, &me)?),
+            Meta::w(attestation),
+            Meta::w(self.approval_address(&attestation, &me)?),
+            Meta::s(me),
+            Meta::sw(pubkey_of(self.payer)),
+            Meta::r(SYSTEM_PROGRAM),
+        ];
+        self.send(signer, &metas, &d)
+    }
 }
 
 pub struct AttestInput {
@@ -203,60 +429,6 @@ pub struct AttestInput {
     pub risk: u8,
     pub rules_version: [u8; 16],
     pub model_id: [u8; 32],
-}
-
-pub fn attest(
-    url: &str,
-    ledger: Pubkey,
-    registry: Pubkey,
-    payer: &SigningKey,
-    a: &AttestInput,
-) -> Result<(Pubkey, String)> {
-    let acc = rpc(
-        url,
-        "getAccountInfo",
-        json!([bs58::encode(registry).into_string(), {"encoding":"base64"}]),
-    )?;
-    let data = acc["value"]["data"][0]
-        .as_str()
-        .context("registry not found; run init-registry first")?;
-    let reg =
-        crate::ledger::parse_registry(&base64::engine::general_purpose::STANDARD.decode(data)?)?;
-    let (attestation, _) = find_pda(&[b"attest", &registry, &reg.count.to_le_bytes()], &ledger)?;
-
-    let mut d = sighash("attest").to_vec();
-    d.extend_from_slice(&a.program);
-    d.extend_from_slice(&a.old_code_hash);
-    d.extend_from_slice(&a.new_code_hash);
-    d.extend_from_slice(&a.report_hash);
-    d.push(a.risk);
-    d.extend_from_slice(&a.rules_version);
-    d.extend_from_slice(&a.model_id);
-
-    let reviewer: Pubkey = *payer.verifying_key().as_bytes();
-    let metas = [
-        Meta {
-            key: registry,
-            signer: false,
-            writable: true,
-        },
-        Meta {
-            key: attestation,
-            signer: false,
-            writable: true,
-        },
-        Meta {
-            key: reviewer,
-            signer: true,
-            writable: true,
-        },
-        Meta {
-            key: SYSTEM_PROGRAM,
-            signer: false,
-            writable: false,
-        },
-    ];
-    Ok((attestation, send(url, payer, ledger, &metas, &d)?))
 }
 
 #[cfg(test)]
@@ -277,19 +449,96 @@ mod tests {
     }
 
     #[test]
-    fn known_pda_matches_solana() {
-        let wallet = decode_pubkey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM").unwrap();
-        let token = decode_pubkey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap();
-        let mint = decode_pubkey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap();
-        let ata = decode_pubkey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL").unwrap();
-        let (pda, _) = find_pda(&[&wallet, &token, &mint], &ata).unwrap();
-        assert!(!on_curve(&pda));
+    fn pda_matches_addresses_created_on_devnet() {
+        let ledger = decode_pubkey("BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc").unwrap();
+        let wallet = decode_pubkey("9fxLpiKzK1zeF42911g5ruKDdTuJFduJSEXcZHh4mCB1").unwrap();
+        let registry = find_pda(&[b"registry", &wallet], &ledger).unwrap().0;
+        assert_eq!(
+            bs58::encode(registry).into_string(),
+            "BEeLrroZNSULfZuSUQuneuzetKXtKMvkmPtuH7x7k6qK"
+        );
+        let att = find_pda(&[b"attest", &registry, &0u64.to_le_bytes()], &ledger)
+            .unwrap()
+            .0;
+        assert_eq!(
+            bs58::encode(att).into_string(),
+            "84BquZaNLSjHpNY5Ccz2AkyK9wHv2jnj2tZGDNoZWv3R"
+        );
     }
 
     #[test]
-    fn anchor_sighash_is_stable() {
-        assert_eq!(sighash("attest").len(), 8);
-        assert_ne!(sighash("attest"), sighash("init_registry"));
+    fn anchor_sighash_matches_known_value() {
+        assert_eq!(hex::encode(sighash("initialize")), "afaf6d1f0d989bed");
+    }
+
+    #[test]
+    fn compile_orders_signers_and_counts_header() {
+        let payer = [1u8; 32];
+        let auth = [2u8; 32];
+        let reg = [3u8; 32];
+        let prog = [9u8; 32];
+        let c = compile(
+            payer,
+            prog,
+            &[
+                Meta::w(reg),
+                Meta::s(auth),
+                Meta::sw(payer),
+                Meta::r(SYSTEM_PROGRAM),
+            ],
+            &[7],
+            [0u8; 32],
+        )
+        .unwrap();
+        assert_eq!(&c.message[..3], &[2, 1, 2]);
+        assert_eq!(c.signers, vec![payer, auth]);
+        let keys: Vec<&[u8]> = c.message[4..4 + 5 * 32].chunks(32).collect();
+        assert_eq!(
+            keys,
+            vec![
+                &payer[..],
+                &auth[..],
+                &reg[..],
+                &SYSTEM_PROGRAM[..],
+                &prog[..]
+            ]
+        );
+    }
+
+    #[test]
+    fn same_payer_and_signer_is_one_signature() {
+        let k = [1u8; 32];
+        let c = compile(
+            k,
+            [9u8; 32],
+            &[Meta::w([3u8; 32]), Meta::s(k)],
+            &[],
+            [0u8; 32],
+        )
+        .unwrap();
+        assert_eq!(c.message[0], 1);
+        assert_eq!(c.signers, vec![k]);
+    }
+
+    #[test]
+    fn writable_program_is_rejected() {
+        assert!(compile([1u8; 32], [9u8; 32], &[Meta::w([9u8; 32])], &[], [0u8; 32]).is_err());
+    }
+
+    #[test]
+    fn signing_needs_every_key() {
+        let a = SigningKey::from_bytes(&[1u8; 32]);
+        let b = SigningKey::from_bytes(&[2u8; 32]);
+        let c = compile(
+            pubkey_of(&a),
+            [9u8; 32],
+            &[Meta::s(pubkey_of(&b))],
+            &[],
+            [0u8; 32],
+        )
+        .unwrap();
+        assert!(sign(&c, &[&a]).is_err());
+        assert_eq!(sign(&c, &[&a, &b]).unwrap()[0], 2);
     }
 }
 
