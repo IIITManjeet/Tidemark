@@ -1,7 +1,9 @@
-use crate::elf::Program;
+use crate::elf::{Program, WideLoad};
 use crate::syscalls;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -48,7 +50,7 @@ pub struct Report {
     pub hunks: Vec<Hunk>,
 }
 
-pub const RULES_VERSION: &str = "tm-rules-0.1";
+pub const RULES_VERSION: &str = "tm-rules-0.2";
 
 const KNOWN: &[(&str, &str)] = &[
     ("11111111111111111111111111111111", "System Program"),
@@ -82,6 +84,124 @@ fn name_key(k: &[u8; 32]) -> String {
         Some((_, n)) => format!("{b58} ({n})"),
         None => b58,
     }
+}
+
+const ANCHOR_CHECKS: &[(i64, &str)] = &[
+    (2001, "ConstraintHasOne"),
+    (2002, "ConstraintSigner"),
+    (2003, "ConstraintRaw"),
+    (2004, "ConstraintOwner"),
+    (2006, "ConstraintSeeds"),
+    (2012, "ConstraintAddress"),
+    (3007, "AccountOwnedByWrongProgram"),
+    (3010, "AccountNotSigner"),
+];
+
+fn discriminator(name: &str) -> u64 {
+    let h = Sha256::digest(format!("global:{name}").as_bytes());
+    u64::from_le_bytes(h[..8].try_into().expect("8 bytes"))
+}
+
+fn camel_words(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, c) in s.char_indices().skip(1) {
+        if c.is_ascii_uppercase() {
+            out.push(&s[start..i]);
+            start = i;
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
+fn handler_names(p: &Program) -> Vec<(String, u64)> {
+    let wide: BTreeSet<u64> = p.wide.iter().map(|w| w.value).collect();
+    let needle = b"Instruction: ";
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(pos) = p.rodata[i..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+    {
+        let at = i + pos + needle.len();
+        let run: String = p.rodata[at..]
+            .iter()
+            .take_while(|b| b.is_ascii_alphanumeric())
+            .map(|b| *b as char)
+            .collect();
+        let words = camel_words(&run);
+        for k in (1..=words.len()).rev() {
+            let name = words[..k]
+                .iter()
+                .map(|w| w.to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join("_");
+            let d = discriminator(&name);
+            if wide.contains(&d) {
+                out.push((name, d));
+                break;
+            }
+        }
+        i = at;
+    }
+    out
+}
+
+fn anchor_handlers(p: &Program) -> BTreeSet<String> {
+    handler_names(p).into_iter().map(|(n, _)| n).collect()
+}
+
+fn handler_discriminators(p: &Program) -> Vec<u64> {
+    handler_names(p).into_iter().map(|(_, d)| d).collect()
+}
+
+fn high_entropy(v: u64) -> bool {
+    let distinct = v.to_le_bytes().iter().collect::<BTreeSet<_>>().len();
+    distinct >= 6 && (v >> 32) > 0x10
+}
+
+fn inline_keys(old: &Program, new: &Program, skip: &BTreeSet<u64>) -> Vec<[u8; 32]> {
+    let seen: BTreeSet<u64> = old.wide.iter().map(|w| w.value).collect();
+    let fresh: Vec<&WideLoad> = new
+        .wide
+        .iter()
+        .filter(|w| {
+            w.slot.is_some()
+                && high_entropy(w.value)
+                && !seen.contains(&w.value)
+                && !skip.contains(&w.value)
+        })
+        .collect();
+    let mut used = vec![false; fresh.len()];
+    let mut keys = Vec::new();
+    for (a, w) in fresh.iter().enumerate() {
+        if used[a] {
+            continue;
+        }
+        let (base, off) = w.slot.expect("filtered");
+        let mut parts = vec![a];
+        for step in 1..4i16 {
+            let want = Some((base, off + 8 * step));
+            match fresh
+                .iter()
+                .enumerate()
+                .find(|(b, x)| !used[*b] && x.slot == want && x.pc.abs_diff(w.pc) <= 64)
+            {
+                Some((b, _)) => parts.push(b),
+                None => break,
+            }
+        }
+        if parts.len() == 4 {
+            let mut k = [0u8; 32];
+            for (j, idx) in parts.iter().enumerate() {
+                used[*idx] = true;
+                k[j * 8..j * 8 + 8].copy_from_slice(&fresh[*idx].value.to_le_bytes());
+            }
+            keys.push(k);
+        }
+    }
+    keys
 }
 
 fn is_known(k: &[u8; 32]) -> bool {
@@ -145,26 +265,29 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let new_keys: Vec<_> = new.consts32.difference(&old.consts32).collect();
+    let mut new_keys: Vec<[u8; 32]> = new.consts32.difference(&old.consts32).copied().collect();
+    let skip: BTreeSet<u64> = handler_discriminators(new).into_iter().collect();
+    for k in inline_keys(old, new, &skip) {
+        if !new_keys.contains(&k) {
+            new_keys.push(k);
+        }
+    }
     let unknown: Vec<String> = new_keys
         .iter()
         .filter(|k| !is_known(k))
         .take(12)
-        .map(|k| name_key(k))
+        .map(name_key)
         .collect();
     let known: Vec<String> = new_keys
         .iter()
         .filter(|k| is_known(k))
-        .map(|k| name_key(k))
+        .map(name_key)
         .collect();
     if !unknown.is_empty() {
         findings.push(Finding {
             id: "TM-KEY-ADD",
             severity: Severity::High,
-            title: format!(
-                "{} new hardcoded 32-byte value(s), possibly pubkeys",
-                new_keys.len() - known.len()
-            ),
+            title: format!("{} new hardcoded key(s)", unknown.len()),
             detail: unknown,
         });
     }
@@ -177,22 +300,7 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let ix = |p: &Program| -> std::collections::BTreeSet<String> {
-        p.strings
-            .iter()
-            .filter_map(|s| {
-                s.find("Instruction: ").map(|i| {
-                    s[i + 13..]
-                        .split(|c: char| !c.is_alphanumeric())
-                        .next()
-                        .unwrap_or("")
-                        .to_string()
-                })
-            })
-            .filter(|s| !s.is_empty())
-            .collect()
-    };
-    let (oi, ni) = (ix(old), ix(new));
+    let (oi, ni) = (anchor_handlers(old), anchor_handlers(new));
     let added_ix: Vec<_> = ni.difference(&oi).map(|s| format!("+ {s}")).collect();
     let removed_ix: Vec<_> = oi.difference(&ni).map(|s| format!("- {s}")).collect();
     if !added_ix.is_empty() || !removed_ix.is_empty() {
@@ -210,30 +318,19 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let check_words = [
-        "signer",
-        "Signer",
-        "owner",
-        "Owner",
-        "has_one",
-        "HasOne",
-        "constraint",
-        "Constraint",
-        "Unauthorized",
-        "authority",
-    ];
-    let gone: Vec<String> = old
-        .strings
-        .difference(&new.strings)
-        .filter(|s| check_words.iter().any(|w| s.contains(w)))
-        .take(10)
-        .cloned()
-        .collect();
+    let mut gone = Vec::new();
+    for (code, name) in ANCHOR_CHECKS {
+        let o = old.imm_counts.get(code).copied().unwrap_or(0);
+        let n = new.imm_counts.get(code).copied().unwrap_or(0);
+        if n < o {
+            gone.push(format!("{name} ({code}): {o} → {n} check sites"));
+        }
+    }
     if !gone.is_empty() {
         findings.push(Finding {
             id: "TM-CHECK-GONE",
             severity: Severity::High,
-            title: "Strings tied to access checks disappeared".into(),
+            title: "Account checks were removed".into(),
             detail: gone,
         });
     }

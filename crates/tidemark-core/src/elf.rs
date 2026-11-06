@@ -6,6 +6,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const R_BPF_64_32: u32 = 10;
 
+#[derive(Debug, Clone, Copy)]
+pub struct WideLoad {
+    pub pc: usize,
+    pub value: u64,
+    pub slot: Option<(u8, i16)>,
+}
+
 pub struct Program {
     pub sha256: String,
     pub size: usize,
@@ -16,6 +23,9 @@ pub struct Program {
     pub callx: usize,
     pub strings: BTreeSet<String>,
     pub consts32: BTreeSet<[u8; 32]>,
+    pub imm_counts: BTreeMap<i64, usize>,
+    pub wide: Vec<WideLoad>,
+    pub rodata: Vec<u8>,
     pub security_txt: Option<String>,
 }
 
@@ -64,7 +74,19 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     let mut norm = Vec::with_capacity(insns.len());
     let mut syscalls_used: BTreeMap<String, usize> = BTreeMap::new();
     let mut callx = 0;
+    let mut imm_counts: BTreeMap<i64, usize> = BTreeMap::new();
+    let mut wide = Vec::new();
     for i in &insns {
+        if matches!(i.op, 0xb7 | 0xb4 | 0x62 | 0x6a | 0x72 | 0x7a) {
+            *imm_counts.entry(i.imm).or_default() += 1;
+        }
+        if i.wide {
+            wide.push(WideLoad {
+                pc: i.pc,
+                value: i.imm as u64,
+                slot: None,
+            });
+        }
         let mut sc: Option<String> = None;
         if i.op == 0x85 {
             sc = reloc_names
@@ -83,13 +105,30 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         norm.push(n);
     }
 
+    let by_pc: HashMap<usize, usize> = insns.iter().enumerate().map(|(n, i)| (i.pc, n)).collect();
+    for w in wide.iter_mut() {
+        let Some(&n) = by_pc.get(&w.pc) else { continue };
+        let reg = insns[n].dst;
+        for j in insns.iter().skip(n + 1).take(8) {
+            if j.op == 0x7b && j.src == reg {
+                w.slot = Some((j.dst, j.off));
+                break;
+            }
+            if j.dst == reg && j.op != 0x7b {
+                break;
+            }
+        }
+    }
+
     let mut strings = BTreeSet::new();
     let mut consts32 = BTreeSet::new();
+    let mut rodata = Vec::new();
     for name in [".rodata", ".data.rel.ro"] {
         if let Some(h) = sec(name) {
             let data = slice(h);
             extract_strings(data, &mut strings);
             extract_consts(data, &mut consts32);
+            rodata.extend_from_slice(data);
         }
     }
     let security_txt = sec(".security.txt").map(|h| {
@@ -109,6 +148,9 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         callx,
         strings,
         consts32,
+        imm_counts,
+        wide,
+        rodata,
         security_txt,
     })
 }
