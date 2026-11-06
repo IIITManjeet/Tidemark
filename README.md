@@ -67,7 +67,7 @@ Deterministic, versioned rules (`tm-rules-0.2`) turn a diff into ranked findings
 Well-known program ids (System, Token, Token-2022, ATA, …) are recognised and
 named, so a new reference to Token isn't mistaken for a planted key.
 
-### 3. Public, tamper-evident attestation ledger · Shipped
+### 3. Public, tamper-evident attestation ledger · Shipped (live on devnet)
 An Anchor program (`tidemark-ledger`) records each review on Solana.
 - **Hash-linked PDAs**: each attestation stores program, old and new code hash,
   report hash, risk, rule version, model id, reviewer and slot, plus the previous
@@ -168,6 +168,36 @@ back to solid surfaces that keep WCAG AA contrast, so the effect never costs
 legibility.
 
 ---
+
+## Live on devnet
+
+The full flow has run on Solana devnet: deploy a vault, snapshot it, upgrade it
+on-chain to the backdoored build, fetch the new bytecode from chain, review it,
+and publish the review to the ledger.
+
+| What | Address |
+|---|---|
+| Ledger program | [`BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc`](https://explorer.solana.com/address/BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc?cluster=devnet) |
+| Demo vault (upgraded to v2) | [`5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3`](https://explorer.solana.com/address/5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3?cluster=devnet) |
+| Reviewer registry | [`BEeLrroZNSULfZuSUQuneuzetKXtKMvkmPtuH7x7k6qK`](https://explorer.solana.com/address/BEeLrroZNSULfZuSUQuneuzetKXtKMvkmPtuH7x7k6qK?cluster=devnet) |
+| Attestation #0 | [`84BquZaNLSjHpNY5Ccz2AkyK9wHv2jnj2tZGDNoZWv3R`](https://explorer.solana.com/address/84BquZaNLSjHpNY5Ccz2AkyK9wHv2jnj2tZGDNoZWv3R?cluster=devnet) |
+
+| Step | Transaction |
+|---|---|
+| Vault v1 deploy | [`4VmsbXQv…`](https://explorer.solana.com/tx/4VmsbXQv5LVP45XnfwUkmDKXocu9SsMuvraSn1baexCwJuJspTPEQUxAxtsmPHhPR6tEt8HZcqdKMgnxGRW9z1Tc?cluster=devnet) |
+| Upgrade to backdoored v2 | [`4YxnJMQY…`](https://explorer.solana.com/tx/4YxnJMQYyRrNEPtQgrvLSfy4CGpK7zC7yUiHa6PzJJkcDvbBAkLmUgTCad1ipJ4Q2oThmeCHkZQTipXJALVCcRyA?cluster=devnet) |
+| Registry created | [`pNqQHuwt…`](https://explorer.solana.com/tx/pNqQHuwtVFPpriTyR75mXSoWQdCbVfWu6ncoRCMVxPEZgmWpC65tDBseranVdhATchz8n4T7z79AfnC9kzqPhxd?cluster=devnet) |
+| Review attested (risk High) | [`28MK4nNB…`](https://explorer.solana.com/tx/28MK4nNBorrSTJ7m5BpjDBs1DBGjFRe3Y5R1M157kknx7DDCzPdJAmpjW7ePyT7jfneteLUp5cDrrSrkmhA4mAvL?cluster=devnet) |
+
+The attestation stores old code hash `99e7c4fe…`, new code hash `519015fa…`
+and report hash `acddec1b…`, the same values `tidemark diff` prints locally.
+Check it yourself:
+
+```sh
+cargo run -p tidemark-cli -- verify-ledger   --program BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc   --registry BEeLrroZNSULfZuSUQuneuzetKXtKMvkmPtuH7x7k6qK
+```
+
+Rerun the flow on any program you control with `scripts/demo-devnet.sh`.
 
 ## Repository layout
 

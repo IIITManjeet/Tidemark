@@ -12,3 +12,4 @@ id.json
 # local-only drafts
 docs/prototype/
 contracts/build.log
+live/
