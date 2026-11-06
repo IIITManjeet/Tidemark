@@ -39,6 +39,9 @@ platform-tools compiler lags stable Rust; each workspace has its own lockfile.
 | `callx` | count of opcode `0x8d` |
 | `strings` | printable runs of 8+ bytes in `.rodata` and `.data.rel.ro` |
 | `consts32` | 8-aligned 32-byte windows with 24+ distinct bytes and fewer than 28 printable bytes (candidate pubkeys) |
+| `imm_counts` | count of each immediate used by `mov`/`st` instructions |
+| `wide` | every `lddw` value with its pc and destination stack slot |
+| `rodata` | raw `.rodata` and `.data.rel.ro` bytes |
 | `security_txt` | `.security.txt` section |
 
 ### 2.2 Decoder (`disasm.rs`)
@@ -57,19 +60,28 @@ Instruction word: `op:u8 | dst:u4 src:u4 | off:i16 | imm:i32`. `lddw`
 masks jump targets, internal call targets and `lddw` addresses so code that
 only moved compares equal. Syscall names and ALU immediates are kept.
 
-### 2.3 Rules (`diff.rs`)
+### 2.3 Rules (`diff.rs`, `tm-rules-0.2`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
+| TM-KEY-ADD | new unknown 32-byte keys (see below) | High |
+| TM-PROG-REF | new keys matching well-known program ids | Low |
+| TM-CHECK-GONE | fewer immediates for Anchor check error codes (2001 has_one, 2002 signer, 2003 raw, 2004 owner, 2006 seeds, 2012 address, 3007 wrong owner program, 3010 not signer) | High |
+| TM-IX-CHANGE | handler set changed; names taken from `Instruction: X` log text and kept only if `sha256("global:x")[..8]` appears as an `lddw` immediate | Medium if added, else Low |
 | TM-SYSCALL-ADD | call-site count of a syscall rose | High for `invoke_signed*`, Low for other sensitive syscalls, else Info |
 | TM-SYSCALL-DEL | call-site count fell | Info |
 | TM-CALLX-ADD | more `callx` sites | Medium |
-| TM-KEY-ADD | new unknown 32-byte constants | High |
-| TM-PROG-REF | new constants matching well-known program ids | Low |
-| TM-IX-CHANGE | Anchor `Instruction: X` log strings added or removed | Medium if added, else Low |
-| TM-CHECK-GONE | removed strings mentioning signer, owner, has_one, constraint, authority | High |
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
-| TM-CHURN | 25%+ of instructions changed | Medium |
+| TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
+
+**Key recovery.** Compiled Rust rarely keeps a `Pubkey` constant as 32
+contiguous bytes. It loads it as four 64-bit `lddw` immediates and stores
+each with `stxdw` to `[base + o]`, `[base + o+8]`, `[base + o+16]`,
+`[base + o+24]`. The loader records, for every `lddw`, the first `stxdw` of
+that register within the next 8 instructions. A key is reported when four new,
+high-entropy immediates (6+ distinct bytes, upper half above 0x10, not a
+handler discriminator) land in consecutive slots of one base register within
+64 instructions. 32-byte windows in `.rodata` are still checked as well.
 
 Overall risk is the highest finding severity. Code hunks come from a line diff
 of normalized disassembly with three lines of context, shown in readable form.
@@ -125,7 +137,8 @@ The first entry uses 32 zero bytes as `prev_hash`.
 - v1: `withdraw` requires `has_one = authority` and a signer.
 - v2 (`--features v2`): `withdraw` accepts an unchecked authority, and a new
   `sweep` instruction moves the treasury to a hardcoded key via `invoke_signed`.
-- Expected findings: TM-SYSCALL-ADD, TM-KEY-ADD, TM-IX-CHANGE.
+- Actual findings (`fixtures/demo_report.json`): TM-KEY-ADD with the exact
+  sweep address, TM-CHECK-GONE for `ConstraintHasOne` 5 → 4, TM-IX-CHANGE `+ sweep`.
 
 ## 6. Toolchain notes
 

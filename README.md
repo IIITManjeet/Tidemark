@@ -13,17 +13,25 @@ Tidemark reads the bytecode itself, tells you what changed and how risky it
 is, and writes every review to a public, tamper-evident ledger on Solana.
 
 ```
-$ tidemark diff vault_v1.so vault_v2.so
-Tidemark upgrade review  (tm-rules-0.1)
+$ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
+Tidemark upgrade review  (tm-rules-0.2)
+  old  99e7c4fe98f886be  20066 insns
+  new  519015fa4879499f  20608 insns
+  changed instructions: 912 (2.24%)
   overall risk: HIGH
 
-[HIGH    ] TM-SYSCALL-ADD  New signed cross-program invocations (invoke_signed)
-[HIGH    ] TM-KEY-ADD      1 new hardcoded 32-byte value(s), possibly pubkeys
-[MEDIUM  ] TM-IX-CHANGE    Instruction handlers added or removed
-             + Sweep
-
-report hash (attest this): 4c1f…
+[HIGH    ] TM-KEY-ADD  1 new hardcoded key(s)
+             9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin
+[HIGH    ] TM-CHECK-GONE  Account checks were removed
+             ConstraintHasOne (2001): 5 → 4 check sites
+[MEDIUM  ] TM-IX-CHANGE  Instruction handlers added or removed
+             + sweep
 ```
+
+That is a real run against the demo vault and its backdoored upgrade, built
+from `contracts/programs/demo-vault`. Tidemark recovers the attacker's address
+byte for byte, spots the dropped `has_one` check and names the new `sweep`
+handler, all from bytecode alone.
 
 ---
 
@@ -44,14 +52,14 @@ Works on any deployed program, with no source code or IDL required.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
 
 ### 2. Upgrade risk rules · Shipped
-Deterministic, versioned rules (`tm-rules-0.1`) turn a diff into ranked findings:
+Deterministic, versioned rules (`tm-rules-0.2`) turn a diff into ranked findings:
 
 | Rule | What it catches |
 |---|---|
-| `TM-SYSCALL-ADD` | New `invoke_signed` call sites: the program can now sign for its PDAs in new places |
-| `TM-KEY-ADD` | New hardcoded 32-byte values (likely pubkeys) that aren't well-known program ids |
-| `TM-IX-CHANGE` | Anchor instruction handlers added or removed |
-| `TM-CHECK-GONE` | Strings tied to signer, owner, `has_one` or constraint checks disappeared |
+| `TM-KEY-ADD` | New 32-byte keys, recovered from `.rodata` or rebuilt from four `lddw` immediates stored to consecutive stack slots |
+| `TM-CHECK-GONE` | Fewer Anchor account-check sites (`has_one`, signer, owner, seeds, address), counted by their error-code immediates |
+| `TM-IX-CHANGE` | Instruction handlers added or removed, each name confirmed by matching `sha256("global:<name>")[..8]` in the code |
+| `TM-SYSCALL-ADD` | New `invoke_signed` and other sensitive syscall call sites |
 | `TM-CALLX-ADD` | New indirect calls with runtime-computed targets |
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
