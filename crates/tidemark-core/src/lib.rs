@@ -15,6 +15,40 @@ pub fn canonical_hash(v: &serde_json::Value) -> String {
     elf::sha256_hex(&serde_json::to_vec(v).expect("value serializes"))
 }
 
+pub fn verdict(report: &diff::Report) -> serde_json::Value {
+    let findings: Vec<&diff::Finding> = report
+        .findings
+        .iter()
+        .filter(|f| f.id != "TM-CHURN")
+        .collect();
+    let risk = findings
+        .iter()
+        .map(|f| f.severity)
+        .max()
+        .unwrap_or(diff::Severity::Info);
+    serde_json::json!({
+        "rules_version": report.rules_version,
+        "old": report.old.sha256,
+        "new": report.new.sha256,
+        "risk": risk,
+        "findings": findings,
+    })
+}
+
+pub fn verdict_risk(report: &diff::Report) -> u8 {
+    match verdict(report)["risk"].as_str() {
+        Some("critical") => 4,
+        Some("high") => 3,
+        Some("medium") => 2,
+        Some("low") => 1,
+        _ => 0,
+    }
+}
+
+pub fn verdict_hash(report: &diff::Report) -> String {
+    canonical_hash(&verdict(report))
+}
+
 pub fn bs58_encode(b: &[u8]) -> String {
     bs58::encode(b).into_string()
 }
