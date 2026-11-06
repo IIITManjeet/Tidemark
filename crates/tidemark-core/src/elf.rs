@@ -33,7 +33,16 @@ pub fn sha256_hex(b: &[u8]) -> String {
     hex::encode(Sha256::digest(b))
 }
 
+pub const MAX_PROGRAM_BYTES: usize = 16 << 20;
+
 pub fn load(bytes: &[u8]) -> Result<Program> {
+    if bytes.len() > MAX_PROGRAM_BYTES {
+        anyhow::bail!(
+            "program is {} bytes; the limit is {}",
+            bytes.len(),
+            MAX_PROGRAM_BYTES
+        );
+    }
     let elf = Elf::parse(bytes).context("not a valid ELF file")?;
     let sec = |name: &str| {
         elf.section_headers

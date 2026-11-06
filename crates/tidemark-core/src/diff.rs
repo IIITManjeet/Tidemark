@@ -2,8 +2,10 @@ use crate::elf::{Program, WideLoad};
 use crate::syscalls;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use similar::{ChangeTag, TextDiff};
+use similar::{Algorithm, ChangeTag, TextDiff};
 use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -46,6 +48,7 @@ pub struct Report {
     pub risk: Severity,
     pub changed_instructions: usize,
     pub churn_pct: f64,
+    pub diff_exact: bool,
     pub findings: Vec<Finding>,
     pub hunks: Vec<Hunk>,
 }
@@ -97,6 +100,11 @@ const ANCHOR_CHECKS: &[(i64, &str)] = &[
     (3010, "AccountNotSigner"),
 ];
 
+const DIFF_DEADLINE: Duration = Duration::from_secs(10);
+const MAX_NAME_LEN: usize = 64;
+const MAX_NAME_WORDS: usize = 8;
+const KEY_PC_WINDOW: usize = 64;
+
 fn discriminator(name: &str) -> u64 {
     let h = Sha256::digest(format!("global:{name}").as_bytes());
     u64::from_le_bytes(h[..8].try_into().expect("8 bytes"))
@@ -128,9 +136,11 @@ fn handler_names(p: &Program) -> Vec<(String, u64)> {
         let run: String = p.rodata[at..]
             .iter()
             .take_while(|b| b.is_ascii_alphanumeric())
+            .take(MAX_NAME_LEN)
             .map(|b| *b as char)
             .collect();
-        let words = camel_words(&run);
+        let mut words = camel_words(&run);
+        words.truncate(MAX_NAME_WORDS);
         for k in (1..=words.len()).rev() {
             let name = words[..k]
                 .iter()
@@ -173,6 +183,13 @@ fn inline_keys(old: &Program, new: &Program, skip: &BTreeSet<u64>) -> Vec<[u8; 3
                 && !skip.contains(&w.value)
         })
         .collect();
+    let mut by_slot: HashMap<(u8, i16), Vec<usize>> = HashMap::new();
+    for (i, w) in fresh.iter().enumerate() {
+        by_slot
+            .entry(w.slot.expect("filtered"))
+            .or_default()
+            .push(i);
+    }
     let mut used = vec![false; fresh.len()];
     let mut keys = Vec::new();
     for (a, w) in fresh.iter().enumerate() {
@@ -182,13 +199,20 @@ fn inline_keys(old: &Program, new: &Program, skip: &BTreeSet<u64>) -> Vec<[u8; 3
         let (base, off) = w.slot.expect("filtered");
         let mut parts = vec![a];
         for step in 1..4i16 {
-            let want = Some((base, off + 8 * step));
-            match fresh
+            let Some(want_off) = off.checked_add(8 * step) else {
+                break;
+            };
+            let Some(cands) = by_slot.get(&(base, want_off)) else {
+                break;
+            };
+            let lo = w.pc.saturating_sub(KEY_PC_WINDOW);
+            let first = cands.partition_point(|&i| fresh[i].pc < lo);
+            let hit = cands[first..]
                 .iter()
-                .enumerate()
-                .find(|(b, x)| !used[*b] && x.slot == want && x.pc.abs_diff(w.pc) <= 64)
-            {
-                Some((b, _)) => parts.push(b),
+                .take_while(|&&i| fresh[i].pc <= w.pc + KEY_PC_WINDOW)
+                .find(|&&i| !used[i] && i != a);
+            match hit {
+                Some(&b) => parts.push(b),
                 None => break,
             }
         }
@@ -354,7 +378,12 @@ pub fn compare(old: &Program, new: &Program) -> Report {
 
     let a = old.norm.join("\n");
     let b = new.norm.join("\n");
-    let td = TextDiff::from_lines(&a, &b);
+    let started = Instant::now();
+    let td = TextDiff::configure()
+        .algorithm(Algorithm::Patience)
+        .timeout(DIFF_DEADLINE)
+        .diff_lines(&a, &b);
+    let diff_exact = started.elapsed() < DIFF_DEADLINE;
     let mut changed = 0usize;
     for c in td.iter_all_changes() {
         if c.tag() != ChangeTag::Equal {
@@ -436,6 +465,7 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         risk,
         changed_instructions: changed,
         churn_pct: churn,
+        diff_exact,
         findings,
         hunks,
     }
