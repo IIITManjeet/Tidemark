@@ -17,6 +17,21 @@ pub enum Severity {
     Critical,
 }
 
+impl Severity {
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        Ok(match s {
+            "info" => Severity::Info,
+            "low" => Severity::Low,
+            "medium" => Severity::Medium,
+            "high" => Severity::High,
+            "critical" => Severity::Critical,
+            other => {
+                anyhow::bail!("unknown severity {other:?}; use info, low, medium, high or critical")
+            }
+        })
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Finding {
     pub id: &'static str,
@@ -37,6 +52,7 @@ pub struct Side {
     pub sha256: String,
     pub size: usize,
     pub instructions: usize,
+    pub sbpf_version: u8,
 }
 
 #[derive(Debug, Serialize)]
@@ -456,11 +472,13 @@ pub fn compare(old: &Program, new: &Program) -> Report {
             sha256: old.sha256.clone(),
             size: old.size,
             instructions: old.insn_count,
+            sbpf_version: old.sbpf_version,
         },
         new: Side {
             sha256: new.sha256.clone(),
             size: new.size,
             instructions: new.insn_count,
+            sbpf_version: new.sbpf_version,
         },
         risk,
         changed_instructions: changed,

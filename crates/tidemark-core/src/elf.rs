@@ -14,6 +14,7 @@ pub struct WideLoad {
 }
 
 pub struct Program {
+    pub sbpf_version: u8,
     pub sha256: String,
     pub size: usize,
     pub insn_count: usize,
@@ -27,6 +28,21 @@ pub struct Program {
     pub wide: Vec<WideLoad>,
     pub rodata: Vec<u8>,
     pub security_txt: Option<String>,
+}
+
+const EM_BPF: u16 = 247;
+const EM_SBPF: u16 = 263;
+const EF_SBPF_V2: u32 = 0x20;
+pub const SUPPORTED_SBPF: [u8; 2] = [0, 1];
+
+pub fn sbpf_version(machine: u16, flags: u32) -> Result<u8> {
+    match (machine, flags) {
+        (EM_BPF, 0) => Ok(0),
+        (EM_BPF, EF_SBPF_V2) => Ok(2),
+        (EM_SBPF, v @ 0..=3) => Ok(v as u8),
+        (EM_BPF | EM_SBPF, f) => anyhow::bail!("unknown SBPF flags {f:#x}"),
+        (m, _) => anyhow::bail!("not an SBPF program (e_machine {m})"),
+    }
 }
 
 pub fn sha256_hex(b: &[u8]) -> String {
@@ -44,6 +60,10 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         );
     }
     let elf = Elf::parse(bytes).context("not a valid ELF file")?;
+    let version = sbpf_version(elf.header.e_machine, elf.header.e_flags)?;
+    if !SUPPORTED_SBPF.contains(&version) {
+        anyhow::bail!("SBPF v{version} programs are not supported yet; Tidemark reads v0 and v1");
+    }
     let sec = |name: &str| {
         elf.section_headers
             .iter()
@@ -161,6 +181,7 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         wide,
         rodata,
         security_txt,
+        sbpf_version: version,
     })
 }
 
