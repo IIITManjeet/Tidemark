@@ -1,4 +1,11 @@
 use anyhow::{Context, Result};
+use std::io::Write;
+
+macro_rules! out {
+    ($($t:tt)*) => {{
+        let _ = writeln!(std::io::stdout(), $($t)*);
+    }};
+}
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tidemark_core::diff::{self, Severity};
@@ -83,15 +90,6 @@ fn expand(p: &str) -> String {
     }
 }
 
-fn hex32(s: &str) -> Result<[u8; 32]> {
-    let v = (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
-        .collect::<Result<Vec<_>, _>>()?;
-    v.try_into()
-        .map_err(|_| anyhow::anyhow!("expected a 32-byte hex hash"))
-}
-
 fn read(p: &PathBuf) -> Result<Vec<u8>> {
     std::fs::read(p).with_context(|| format!("cannot read {}", p.display()))
 }
@@ -126,39 +124,43 @@ fn main() -> Result<()> {
             let o = elf::load(&read(&old)?)?;
             let n = elf::load(&read(&new)?)?;
             let r = diff::compare(&o, &n);
-            println!("Tidemark upgrade review  ({})", r.rules_version);
-            println!(
+            out!("Tidemark upgrade review  ({})", r.rules_version);
+            out!(
                 "  old  {}  {} insns",
                 &r.old.sha256[..16],
                 r.old.instructions
             );
-            println!(
+            out!(
                 "  new  {}  {} insns",
                 &r.new.sha256[..16],
                 r.new.instructions
             );
-            println!(
+            out!(
                 "  changed instructions: {} ({}%)",
-                r.changed_instructions, r.churn_pct
+                r.changed_instructions,
+                r.churn_pct
             );
-            println!("  overall risk: {}\n", sev(r.risk));
+            out!("  overall risk: {}\n", sev(r.risk));
+            if !r.diff_exact {
+                out!("  note: the code diff hit its time limit; hunks and churn are approximate\n");
+            }
             for f in &r.findings {
-                println!("[{:8}] {}  {}", sev(f.severity), f.id, f.title);
+                out!("[{:8}] {}  {}", sev(f.severity), f.id, f.title);
                 for d in &f.detail {
-                    println!("             {d}");
+                    out!("             {d}");
                 }
             }
             for h in r.hunks.iter().take(hunks) {
-                println!("\n@@ old {:#x} / new {:#x} @@", h.old_start, h.new_start);
+                out!("\n@@ old {:#x} / new {:#x} @@", h.old_start, h.new_start);
                 for l in h.lines.iter().take(30) {
-                    println!("{l}");
+                    out!("{l}");
                 }
             }
             let rh = report_hash(&r);
-            println!("\nreport hash (attest this): {rh}");
+            out!("\nreport hash (attest this): {rh}");
             if let Some(p) = json {
                 std::fs::write(&p, serde_json::to_string_pretty(&r)?)?;
-                println!("JSON report written to {}", p.display());
+                out!("JSON report written to {}", p.display());
             }
             if r.risk >= Severity::High {
                 std::process::exit(2);
@@ -166,15 +168,16 @@ fn main() -> Result<()> {
         }
         Cmd::Inspect { file } => {
             let p = elf::load(&read(&file)?)?;
-            println!("sha256        {}", p.sha256);
-            println!(
+            out!("sha256        {}", p.sha256);
+            out!(
                 "size          {} bytes, {} instructions",
-                p.size, p.insn_count
+                p.size,
+                p.insn_count
             );
-            println!("syscalls      {:?}", p.syscalls);
-            println!("callx sites   {}", p.callx);
-            println!("32-byte consts {}", p.consts32.len());
-            println!(
+            out!("syscalls      {:?}", p.syscalls);
+            out!("callx sites   {}", p.callx);
+            out!("32-byte consts {}", p.consts32.len());
+            out!(
                 "security.txt  {}",
                 if p.security_txt.is_some() {
                     "present"
@@ -190,13 +193,13 @@ fn main() -> Result<()> {
         } => {
             let d = rpc::fetch(&url, &program_id)?;
             std::fs::write(&out, &d.elf)?;
-            println!("program data account  {}", d.programdata);
-            println!("last deployed at slot {}", d.last_deploy_slot);
-            println!(
+            out!("program data account  {}", d.programdata);
+            out!("last deployed at slot {}", d.last_deploy_slot);
+            out!(
                 "upgrade authority     {}",
                 d.upgrade_authority.as_deref().unwrap_or("none (immutable)")
             );
-            println!("wrote {} bytes to {}", d.elf.len(), out.display());
+            out!("wrote {} bytes to {}", d.elf.len(), out.display());
         }
         Cmd::InitRegistry {
             ledger,
@@ -207,8 +210,8 @@ fn main() -> Result<()> {
             let key = submit::load_keypair(&expand(&keypair))?;
             let (registry, sig) =
                 submit::init_registry(&url, submit::decode_pubkey(&ledger)?, &key, &name)?;
-            println!("registry  {}", tidemark_core::bs58_encode(&registry));
-            println!("tx        {sig}");
+            out!("registry  {}", tidemark_core::bs58_encode(&registry));
+            out!("tx        {sig}");
         }
         Cmd::Attest {
             report,
@@ -227,38 +230,33 @@ fn main() -> Result<()> {
             let raw = read(&report)?;
             let v: serde_json::Value =
                 serde_json::from_slice(&raw).context("report is not valid JSON")?;
-            let risk = match v["risk"].as_str().unwrap_or("info") {
-                "critical" => 4,
-                "high" => 3,
-                "medium" => 2,
-                "low" => 1,
-                _ => 0,
-            };
+            let risk =
+                tidemark_core::parse_risk(v["risk"].as_str().context("report has no risk field")?)?;
             let mut rules = [0u8; 16];
             let rv = v["rules_version"].as_str().unwrap_or("").as_bytes();
             rules[..rv.len().min(16)].copy_from_slice(&rv[..rv.len().min(16)]);
             let input = submit::AttestInput {
                 program: submit::decode_pubkey(&program)?,
-                old_code_hash: hex32(
+                old_code_hash: tidemark_core::parse_hash32(
                     v["old"]["sha256"]
                         .as_str()
                         .context("report missing old.sha256")?,
                 )?,
-                new_code_hash: hex32(
+                new_code_hash: tidemark_core::parse_hash32(
                     v["new"]["sha256"]
                         .as_str()
                         .context("report missing new.sha256")?,
                 )?,
-                report_hash: hex32(&tidemark_core::canonical_hash(&v))?,
+                report_hash: tidemark_core::parse_hash32(&tidemark_core::canonical_hash(&v))?,
                 risk,
                 rules_version: rules,
                 model_id: [0u8; 32],
             };
             let (att, sig) = submit::attest(&url, ledger_pk, registry_pk, &key, &input)?;
-            println!("attestation  {}", tidemark_core::bs58_encode(&att));
-            println!("registry     {}", tidemark_core::bs58_encode(&registry_pk));
-            println!("risk         {risk}");
-            println!("tx           {sig}");
+            out!("attestation  {}", tidemark_core::bs58_encode(&att));
+            out!("registry     {}", tidemark_core::bs58_encode(&registry_pk));
+            out!("risk         {risk}");
+            out!("tx           {sig}");
         }
         Cmd::VerifyLedger {
             program,
@@ -266,8 +264,8 @@ fn main() -> Result<()> {
             rpc: url,
         } => {
             let (reg, entries) = ledger::fetch(&url, &program, &registry)?;
-            println!("registry  {registry}");
-            println!(
+            out!("registry  {registry}");
+            out!(
                 "entries   {} on-chain, registry count {}",
                 entries.len(),
                 reg.count
@@ -277,7 +275,7 @@ fn main() -> Result<()> {
                 e.sort_by_key(|a| a.index);
                 e
             } {
-                println!(
+                out!(
                     "  #{:<4} slot {:<10} risk {}  program {}  entry {}",
                     a.index,
                     a.slot,
@@ -287,9 +285,9 @@ fn main() -> Result<()> {
                 );
             }
             match ledger::verify_chain(&reg, entries) {
-                Ok(n) => println!("chain OK: {n} entries, head {}", &hex(&reg.last_hash)[..16]),
+                Ok(n) => out!("chain OK: {n} entries, head {}", &hex(&reg.last_hash)[..16]),
                 Err(e) => {
-                    println!("chain BROKEN: {e:?}");
+                    out!("chain BROKEN: {e:?}");
                     std::process::exit(3);
                 }
             }
