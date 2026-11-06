@@ -1,0 +1,27 @@
+[package]
+name = "tidemark-core"
+description = "sBPF bytecode diffing, upgrade risk rules and report hashing for Solana programs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+bs58.workspace = true
+curve25519-dalek.workspace = true
+ed25519-dalek.workspace = true
+goblin.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+similar.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+bs58.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
