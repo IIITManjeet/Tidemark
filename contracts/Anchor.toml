@@ -1,0 +1,24 @@
+[toolchain]
+anchor_version = "0.31.1"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+demo_vault = "5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3"
+tidemark_ledger = "BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc"
+
+[programs.localnet]
+demo_vault = "5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3"
+tidemark_ledger = "BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "echo 'no ts tests yet'"
