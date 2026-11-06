@@ -1,0 +1,14 @@
+target/
+node_modules/
+.anchor/
+test-ledger/
+*.log
+.env
+.env.*
+# never commit keypairs
+*-keypair.json
+id.json
+
+# local-only drafts
+docs/prototype/
+contracts/build.log

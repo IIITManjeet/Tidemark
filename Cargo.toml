@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/*"]
+exclude = ["contracts"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/IIITManjeet/Tidemark"
+
+[workspace.dependencies]
+tidemark-core = { path = "crates/tidemark-core" }
+anyhow = "1"
+base64 = "0.22"
+bs58 = "0.5"
+curve25519-dalek = "4"
+ed25519-dalek = "2"
+clap = { version = "4", features = ["derive"] }
+goblin = { version = "0.8", default-features = false, features = ["std", "elf32", "elf64", "endian_fd"] }
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+similar = "2"
+ureq = { version = "2", features = ["json"] }
