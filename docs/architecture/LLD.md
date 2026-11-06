@@ -88,15 +88,36 @@ of normalized disassembly with three lines of context, shown in readable form.
 
 ### 2.4 Report hash
 
-`report_hash = sha256(serde_json::to_vec(report))`. Field order is fixed by
-the struct definitions, so the hash is reproducible for a given version.
+`report_hash = sha256(serde_json::to_vec(serde_json::to_value(report)))`.
+Converting through `Value` sorts object keys (serde_json's default map), so the
+hash does not depend on struct field order or on how a report file was
+formatted. This relies on serde_json's `preserve_order` feature staying off.
 
 ### 2.5 RPC fetch (`rpc.rs`)
 
 1. `getAccountInfo(program_id)`; owner must be the BPF Upgradeable Loader.
 2. Bytes `4..36` give the ProgramData address.
-3. `getAccountInfo(programdata)`. Header is 45 bytes: tag `u32`, slot `u64`,
-   `Option<Pubkey>`. The ELF follows; trailing zero padding is trimmed.
+3. `getAccountInfo(programdata)`; owner must be the loader. Header is 45 bytes:
+   tag `u32` (must be 3), slot `u64`, `Option<Pubkey>` (tag must be 0 or 1).
+   The program account's tag must be 2.
+4. The ELF length is computed from its own headers (section and program header
+   tables plus every non-NOBITS section), so trailing zero bytes that belong to
+   the file are kept and allocation padding is dropped.
+
+All RPC calls share one client with a 10 s connect timeout, a 60 s overall
+timeout and a 64 MiB response cap.
+
+### 2.6 Resource limits
+
+| Limit | Value | Why |
+|---|---|---|
+| Program size | 16 MiB | Solana programs are far smaller; bounds memory |
+| Line diff | patience, 10 s deadline | Myers is quadratic on unrelated inputs |
+| Handler name scan | 64 chars, 8 words per log string | stops quadratic name guessing |
+| Key grouping | slot-indexed, 64-pc window | linear in the number of `lddw` |
+
+When the diff deadline is hit the report sets `diff_exact: false` and the CLI
+says the hunks are approximate.
 
 ## 3. tidemark-cli
 

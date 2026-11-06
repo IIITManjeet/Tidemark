@@ -10,14 +10,14 @@ build hash matches source. None of it shows the **behavioural difference
 between two deployed versions**.
 
 Tidemark reads the bytecode itself, tells you what changed and how risky it
-is, and writes every review to a public, tamper-evident ledger on Solana.
+is, and writes every review to a public, hash-linked ledger on Solana.
 
 ```
 $ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
 Tidemark upgrade review  (tm-rules-0.2)
   old  99e7c4fe98f886be  20066 insns
   new  519015fa4879499f  20608 insns
-  changed instructions: 912 (2.24%)
+  changed instructions: 986 (2.42%)
   overall risk: HIGH
 
 [HIGH    ] TM-KEY-ADD  1 new hardcoded key(s)
@@ -41,12 +41,18 @@ Status key: **Shipped** is in this repository and tested. **Roadmap** is designe
 (see [HLD](docs/architecture/HLD.md)) but not built yet.
 
 ### 1. Bytecode-level upgrade diff · Shipped
-Works on any deployed program, with no source code or IDL required.
+Works on deployed SBPFv1 programs (what `cargo build-sbf` and Anchor 0.31
+produce today), with no source code or IDL required. SBPFv2/v3 binaries are not
+supported yet.
 - A purpose-built **sBPF decoder** handles every instruction class, including
   two-word `lddw`.
 - **Normalized comparison**: jump targets, internal call targets and load
-  addresses are masked, so code that only *moved* compares equal and the diff
-  shows real behaviour changes.
+  addresses are masked, so code that only *moved* compares equal. The same
+  masking currently also hides a branch or call that was *retargeted* and a
+  changed 64-bit constant; fixing that is the next detection milestone.
+- **Bounded work**: inputs over 16 MiB are rejected, the line diff runs a
+  patience algorithm with a 10 s deadline, and every rule runs in near-linear
+  time, so a hostile binary can't stall a CI job.
 - **Syscall resolution** through `R_BPF_64_32` relocations (SBPFv1) and murmur3
   syscall ids (static syscalls). `call 0x…` shows as `call sol_invoke_signed_rust`.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
@@ -67,30 +73,45 @@ Deterministic, versioned rules (`tm-rules-0.2`) turn a diff into ranked findings
 Well-known program ids (System, Token, Token-2022, ATA, …) are recognised and
 named, so a new reference to Token isn't mistaken for a planted key.
 
-### 3. Public, tamper-evident attestation ledger · Shipped (live on devnet)
+These rules are heuristics over compiled code, tuned on Anchor programs. They
+catch the demo backdoor exactly, but a determined attacker can shape code to
+avoid them (for example comparing against a key instead of storing it, or
+reusing an existing CPI call site). Treat a clean report as "nothing obvious
+changed", not as proof of safety. Known gaps are tracked as GitHub issues.
+
+### 3. Public, hash-linked attestation ledger · Shipped (live on devnet)
 An Anchor program (`tidemark-ledger`) records each review on Solana.
 - **Hash-linked PDAs**: each attestation stores program, old and new code hash,
   report hash, risk, rule version, model id, reviewer and slot, plus the previous
   entry's hash. `entry_hash = sha256(fields ‖ prev_hash)`.
 - **Independent verification**: `tidemark verify-ledger` rebuilds the chain
-  from raw account data and detects edited, deleted or truncated entries without
-  trusting Tidemark's servers.
-- **Permissionless reviewers**: anyone can run a registry, and every entry is
-  signed by its reviewer, so reputation is earned on-chain.
-- **Canonical report hashing**: reports are hashed as sorted-key JSON, so the
-  hash `diff` prints is exactly the one `attest` publishes.
+  from raw account data and detects edited, deleted, reordered or truncated
+  entries, using any Solana RPC you choose.
+- **Signed entries**: every attestation records the key that signed it.
+- **Canonical report hashing**: reports are hashed as sorted-key JSON, so for an
+  unmodified report file the hash `diff` prints is the one `attest` publishes.
+
+Current trust assumptions, being addressed in the contract hardening milestone:
+the ledger program on devnet is upgradeable by a single key; any key can
+currently append to any registry; `attest` takes the report file as given
+rather than re-running the diff; and verification trusts the RPC you query.
 
 ### 4. CI gate for safe code shipping · Shipped
-`tidemark diff` exits with code `2` on High or Critical findings. Drop it into a
-pipeline and a risky upgrade can't merge or deploy unnoticed. This repo's own
+`tidemark diff` exits with code `2` on High or Critical findings, so a pipeline
+can block those upgrades automatically. Medium findings (such as a new
+instruction handler) are reported but don't fail the job yet. This repo's own
 CI runs clippy with warnings as errors, the test suite, and a live review of the
 demo upgrade.
 
 ### 5. Typed, proof-checked Rust · Shipped
-- **Kani model-checking harnesses** cover the code that touches untrusted input.
-  They prove that the decoder never panics or reads out of bounds on arbitrary
-  bytes, that account parsers reject hostile data instead of crashing, and that
-  the transaction length encoding round-trips for every `u16`.
+- **Kani model-checking harnesses** for the lowest-level parsers: the sBPF
+  decoder on any input up to 32 bytes, instruction rendering, the ledger account
+  parsers up to their fixed sizes, and the transaction length encoding for every
+  `u16`. They run locally with `cargo kani`; they are not in CI yet, and they do
+  not cover the ELF loader or the rules.
+- **Fuzz-style regression tests** for the inputs reviewers used to stall or crash
+  the tool: oversized log names, tens of thousands of stack constants, very
+  large unrelated programs, and malformed hashes in a report.
 - **Typed on-chain accounts**: Anchor `Account<T>` with PDA seeds and bumps
   validated by the framework, `InitSpace`-derived sizes, checked arithmetic on
   the attestation counter, and a bounded risk value.
@@ -112,7 +133,8 @@ A small set of agents layered on top of the deterministic engine:
 Guardrails: agents hold no keys and can't sign. They return schema-checked JSON
 only. Program bytes and on-chain strings are treated as untrusted data, never
 as instructions, which defends against prompt and memory injection. The model
-id and prompt hash are recorded in each attestation's `model_id`.
+id and prompt hash will be recorded in each attestation's `model_id` (zero
+today, since no model runs yet).
 
 ### 8. Cost-efficient inference cascade · Roadmap
 Expensive work runs only when it has to:
@@ -190,7 +212,9 @@ and publish the review to the ledger.
 | Review attested (risk High) | [`28MK4nNB…`](https://explorer.solana.com/tx/28MK4nNBorrSTJ7m5BpjDBs1DBGjFRe3Y5R1M157kknx7DDCzPdJAmpjW7ePyT7jfneteLUp5cDrrSrkmhA4mAvL?cluster=devnet) |
 
 The attestation stores old code hash `99e7c4fe…`, new code hash `519015fa…`
-and report hash `acddec1b…`, the same values `tidemark diff` prints locally.
+and report hash `acddec1b…`, the values `tidemark diff` printed when it was
+attested (rules 0.2). Later report formats add fields, so a fresh run hashes
+differently; the code hashes stay the same.
 Check it yourself:
 
 ```sh
