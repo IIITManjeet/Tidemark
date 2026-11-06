@@ -42,8 +42,9 @@ Status key: **Shipped** is in this repository and tested. **Roadmap** is designe
 
 ### 1. Bytecode-level upgrade diff · Shipped
 Works on deployed SBPFv1 programs (what `cargo build-sbf` and Anchor 0.31
-produce today), with no source code or IDL required. SBPFv2/v3 binaries are not
-supported yet.
+produce today), with no source code or IDL required. The SBPF version is read
+from the ELF header; v2 and v3 binaries, which change instruction meanings, are
+refused with a clear message instead of being mis-read.
 - A purpose-built **sBPF decoder** handles every instruction class, including
   two-word `lddw`.
 - **Normalized comparison**: jump targets, internal call targets and load
@@ -116,9 +117,10 @@ by a single key (tracked in #15, to move behind a multisig with a timelock or
 be frozen).
 
 ### 4. CI gate for safe code shipping · Shipped
-`tidemark diff` exits with code `2` on High or Critical findings, so a pipeline
-can block those upgrades automatically. Medium findings (such as a new
-instruction handler) are reported but don't fail the job yet. This repo's own
+`tidemark diff` exits with code `2` when the risk reaches the `--fail-on` level
+(`high` by default), so a pipeline can block risky upgrades automatically. Use
+`--fail-on medium` to also stop on a new instruction handler or indirect call.
+An unknown level is a usage error (exit `1`), never a silent pass. This repo's own
 CI runs clippy with warnings as errors, the test suite, and a live review of the
 demo upgrade.
 
