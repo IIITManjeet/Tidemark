@@ -49,6 +49,12 @@ enum Cmd {
         json: Option<PathBuf>,
         #[arg(long, default_value_t = 4, help = "Code hunks to print")]
         hunks: usize,
+        #[arg(
+            long,
+            default_value = "high",
+            help = "Exit with code 2 when risk reaches this level (info, low, medium, high, critical)"
+        )]
+        fail_on: String,
     },
     #[command(about = "Summarize one program binary")]
     Inspect { file: PathBuf },
@@ -247,7 +253,9 @@ fn main() -> Result<()> {
             new,
             json,
             hunks,
+            fail_on,
         } => {
+            let gate = Severity::parse(&fail_on)?;
             let o = elf::load(&read(&old)?)?;
             let n = elf::load(&read(&new)?)?;
             let r = diff::compare(&o, &n);
@@ -258,7 +266,7 @@ fn main() -> Result<()> {
                 std::fs::write(&p, serde_json::to_string_pretty(&r)?)?;
                 out!("JSON report written to {}", p.display());
             }
-            if r.risk >= Severity::High {
+            if r.risk >= gate {
                 std::process::exit(2);
             }
         }
