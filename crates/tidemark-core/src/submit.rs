@@ -259,6 +259,38 @@ impl Ctx<'_> {
         Ok(sig)
     }
 
+    fn account_data(&self, key: &Pubkey) -> Result<Option<Vec<u8>>> {
+        let r = rpc(
+            self.url,
+            "getAccountInfo",
+            json!([bs58::encode(key).into_string(), {"encoding": "base64", "commitment": "confirmed"}]),
+        )?;
+        match r["value"]["data"][0].as_str() {
+            Some(d) if !r["value"].is_null() => {
+                Ok(Some(base64::engine::general_purpose::STANDARD.decode(d)?))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn exists(&self, key: &Pubkey) -> Result<bool> {
+        Ok(self.account_data(key)?.is_some())
+    }
+
+    fn require_active_reviewer(&self, registry: &Pubkey, me: &Pubkey) -> Result<()> {
+        let who = bs58::encode(me).into_string();
+        let Some(data) = self.account_data(&self.reviewer_address(registry, me)?)? else {
+            bail!(
+                "{who} is not a reviewer of this registry; ask its authority to run add-reviewer"
+            );
+        };
+        let (_, r) = crate::ledger::parse_reviewer(&data)?;
+        if !r.active {
+            bail!("{who} is a disabled reviewer of this registry");
+        }
+        Ok(())
+    }
+
     pub fn registry_address(&self, authority: &Pubkey) -> Result<Pubkey> {
         Ok(find_pda(&[b"registry2", authority], &self.ledger)?.0)
     }
@@ -376,6 +408,7 @@ impl Ctx<'_> {
             &bs58::encode(registry).into_string(),
         )?;
         let me = pubkey_of(signer);
+        self.require_active_reviewer(&registry, &me)?;
         let attestation = self.attestation_address(&registry, reg.count)?;
         let mut d = sighash("attest").to_vec();
         d.extend_from_slice(&a.program);
@@ -406,6 +439,10 @@ impl Ctx<'_> {
     ) -> Result<String> {
         let me = pubkey_of(signer);
         let attestation = self.attestation_address(&registry, index)?;
+        self.require_active_reviewer(&registry, &me)?;
+        if self.exists(&self.approval_address(&attestation, &me)?)? {
+            bail!("you already approved entry #{index}");
+        }
         let mut d = sighash("approve").to_vec();
         d.extend_from_slice(&report_hash);
         let metas = [
