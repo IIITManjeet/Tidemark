@@ -132,13 +132,7 @@ fn build_tx(
 }
 
 fn rpc(url: &str, method: &str, params: Value) -> Result<Value> {
-    let v: Value = ureq::post(url)
-        .send_json(json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))?
-        .into_json()?;
-    if let Some(e) = v.get("error") {
-        bail!("RPC error: {e}");
-    }
-    Ok(v["result"].clone())
+    crate::rpc::call(url, method, params)
 }
 
 fn send(

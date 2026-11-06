@@ -133,13 +133,7 @@ pub fn verify_chain(reg: &Registry, mut entries: Vec<Attestation>) -> Result<usi
 }
 
 fn rpc_call(rpc: &str, method: &str, params: Value) -> Result<Value> {
-    let v: Value = ureq::post(rpc)
-        .send_json(json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))?
-        .into_json()?;
-    if let Some(e) = v.get("error") {
-        bail!("RPC error: {e}");
-    }
-    Ok(v["result"].clone())
+    crate::rpc::call(rpc, method, params)
 }
 
 fn b64(s: &str) -> Result<Vec<u8>> {
