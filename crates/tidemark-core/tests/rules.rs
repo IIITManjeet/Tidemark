@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use tidemark_core::diff::{compare, Severity};
 use tidemark_core::disasm::{decode, render};
-use tidemark_core::elf::Program;
+use tidemark_core::elf::{Program, WideLoad};
 
 fn program(norm: &[&str]) -> Program {
     Program {
@@ -18,6 +18,9 @@ fn program(norm: &[&str]) -> Program {
         callx: 0,
         strings: BTreeSet::new(),
         consts32: BTreeSet::new(),
+        imm_counts: BTreeMap::new(),
+        wide: Vec::new(),
+        rodata: Vec::new(),
         security_txt: None,
     }
 }
@@ -81,13 +84,33 @@ fn hardcoded_key_is_high_but_known_program_is_low() {
     assert_eq!(r.risk, Severity::Low);
 }
 
+fn disc(name: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let h = Sha256::digest(format!("global:{name}").as_bytes());
+    u64::from_le_bytes(h[..8].try_into().unwrap())
+}
+
+fn with_handlers(p: &mut Program, names: &[(&str, &str)]) {
+    for (shown, snake) in names {
+        p.rodata
+            .extend_from_slice(format!("Instruction: {shown}").as_bytes());
+        p.wide.push(WideLoad {
+            pc: p.wide.len() * 2,
+            value: disc(snake),
+            slot: None,
+        });
+    }
+}
+
 #[test]
-fn new_instruction_handler_is_reported() {
+fn new_instruction_handler_is_confirmed_by_discriminator() {
     let mut a = program(&["exit"]);
     let mut b = program(&["exit"]);
-    a.strings.insert("Instruction: Withdraw".into());
-    b.strings.insert("Instruction: Withdraw".into());
-    b.strings.insert("Instruction: Sweep".into());
+    with_handlers(&mut a, &[("Withdraw", "withdraw")]);
+    with_handlers(
+        &mut b,
+        &[("Withdraw", "withdraw"), ("SweepAll", "sweep_all")],
+    );
     let r = compare(&a, &b);
     let f = r
         .findings
@@ -95,16 +118,70 @@ fn new_instruction_handler_is_reported() {
         .find(|f| f.id == "TM-IX-CHANGE")
         .expect("ix finding");
     assert_eq!(f.severity, Severity::Medium);
-    assert_eq!(f.detail, vec!["+ Sweep".to_string()]);
+    assert_eq!(f.detail, vec!["+ sweep_all".to_string()]);
 }
 
 #[test]
-fn removed_access_check_string_is_high() {
+fn log_string_without_discriminator_is_ignored() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    b.rodata.extend_from_slice(b"Instruction: Fake");
+    let r = compare(&a, &b);
+    assert!(!ids(&r).contains(&"TM-IX-CHANGE"));
+}
+
+#[test]
+fn removed_has_one_check_is_high() {
     let mut a = program(&["exit"]);
-    let b = program(&["exit"]);
-    a.strings.insert("A has_one constraint was violated".into());
+    let mut b = program(&["exit"]);
+    a.imm_counts.insert(2001, 2);
+    b.imm_counts.insert(2001, 1);
     let r = compare(&a, &b);
     assert!(ids(&r).contains(&"TM-CHECK-GONE"));
+    assert_eq!(r.risk, Severity::High);
+}
+
+#[test]
+fn key_built_on_stack_is_recovered() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    let key: [u8; 32] = bs58::decode("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap();
+    for j in 0..4 {
+        b.wide.push(WideLoad {
+            pc: 10 + j * 3,
+            value: u64::from_le_bytes(key[j * 8..j * 8 + 8].try_into().unwrap()),
+            slot: Some((10, -64 + 8 * j as i16)),
+        });
+    }
+    let r = compare(&a, &b);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-KEY-ADD")
+        .expect("key finding");
+    assert_eq!(
+        f.detail,
+        vec!["9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"]
+    );
+}
+
+#[test]
+fn scattered_constants_are_not_a_key() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    for j in 0..4u64 {
+        b.wide.push(WideLoad {
+            pc: 10 + j as usize * 3,
+            value: 0x9a8b_7c6d_5e4f_3021 ^ (j << 40),
+            slot: Some((10, -64 + 16 * j as i16)),
+        });
+    }
+    let r = compare(&a, &b);
+    assert!(!ids(&r).contains(&"TM-KEY-ADD"));
 }
 
 #[test]
