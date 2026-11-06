@@ -3,20 +3,30 @@ set -euo pipefail
 
 RPC="${RPC:-https://api.devnet.solana.com}"
 LEDGER="${LEDGER:-BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc}"
-PROGRAM="${1:?usage: demo-devnet.sh <PROGRAM_ID> [before.so]}"
-BEFORE="${2:-}"
 KEYPAIR="${KEYPAIR:-$HOME/.config/solana/id.json}"
 OUT="${OUT:-live}"
 TM="cargo run -q -p tidemark-cli --"
 
-mkdir -p "$OUT"
-if [ -z "$BEFORE" ]; then
-  $TM fetch "$PROGRAM" --rpc "$RPC" -o "$OUT/before.so"
-  echo "snapshot saved; upgrade the program, then run: $0 $PROGRAM $OUT/before.so"
-  exit 0
-fi
+usage() {
+  echo "usage:"
+  echo "  $0 snapshot <PROGRAM_ID>                 save the program before you upgrade it"
+  echo "  $0 attest   <PROGRAM_ID> <REGISTRY>      review the deployed upgrade and publish it"
+  echo "  $0 approve  <REGISTRY> <INDEX>           re-run a review and co-sign it"
+  exit 1
+}
 
-$TM fetch "$PROGRAM" --rpc "$RPC" -o "$OUT/after.so"
-$TM diff "$BEFORE" "$OUT/after.so" --json "$OUT/report.json" --hunks 0 || true
-$TM init-registry --ledger "$LEDGER" --keypair "$KEYPAIR" --rpc "$RPC" 2>/dev/null || true
-$TM attest "$OUT/report.json" --program "$PROGRAM" --ledger "$LEDGER" --keypair "$KEYPAIR" --rpc "$RPC"
+mkdir -p "$OUT"
+case "${1:-}" in
+  snapshot)
+    $TM fetch "${2:?program id}" --rpc "$RPC" -o "$OUT/before.so"
+    ;;
+  attest)
+    $TM attest --ledger "$LEDGER" --rpc "$RPC" --keypair "$KEYPAIR" \
+      --program "${2:?program id}" --registry "${3:?registry}" --old "$OUT/before.so" --json "$OUT/report.json"
+    ;;
+  approve)
+    $TM approve --ledger "$LEDGER" --rpc "$RPC" --keypair "$KEYPAIR" \
+      --registry "${2:?registry}" --index "${3:?index}" --old "$OUT/before.so"
+    ;;
+  *) usage ;;
+esac
