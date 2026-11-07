@@ -23,14 +23,15 @@ Tidemark upgrade review  (tm-rules-0.3)
 [HIGH    ] TM-KEY-ADD  1 new hardcoded key(s)
              9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin
 [HIGH    ] TM-CHECK-GONE  Account checks were removed
-             ConstraintHasOne (2001): 5 → 4 check sites
+             withdraw: ConstraintHasOne (2001): 1 → 0 check sites
+             withdraw: AccountNotSigner (3010): 1 → 0 check sites
 [MEDIUM  ] TM-IX-CHANGE  Instruction handlers added or removed
              + sweep
 ```
 
 That is a real run against the demo vault and its backdoored upgrade, built
 from `contracts/programs/demo-vault`. Tidemark recovers the attacker's address
-byte for byte, spots the dropped `has_one` check and names the new `sweep`
+byte for byte, spots that `withdraw` lost its `has_one` and signer checks and names the new `sweep`
 handler, all from bytecode alone.
 
 ---
@@ -64,8 +65,9 @@ Deterministic, versioned rules (`tm-rules-0.3`) turn a diff into ranked findings
 | Rule | What it catches |
 |---|---|
 | `TM-KEY-ADD` | New 32-byte keys, found anywhere in `.rodata` or rebuilt from four `lddw` immediates that are stored to, or compared against, consecutive 8-byte slots |
-| `TM-CHECK-GONE` | Fewer Anchor account-check sites (`has_one`, signer, owner, seeds, address), counted by their error-code immediates |
-| `TM-IX-CHANGE` | Instruction handlers added or removed, each name confirmed by matching `sha256("global:<name>")[..8]` in the code |
+| `TM-CHECK-GONE` | An instruction handler lost Anchor account-check sites (`has_one`, signer, owner, seeds, address), counted by error-code immediates in the code each handler can reach |
+| `TM-ERR-GONE` | An instruction handler lost custom error checks (`require!`, error codes 6000+) |
+| `TM-IX-CHANGE` | Instruction handlers added or removed, read from the Anchor dispatch table; names confirmed by matching `sha256("global:<name>")[..8]` |
 | `TM-SYSCALL-ADD` | New `invoke_signed` and other sensitive syscall call sites |
 | `TM-CALLX-ADD` | New indirect calls with runtime-computed targets |
 | `TM-BRANCH-RETARGET` | A branch that looks unchanged now jumps to different code |

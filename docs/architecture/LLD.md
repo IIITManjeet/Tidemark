@@ -78,8 +78,9 @@ absolute branch or internal-call target and the constant, if any.
 |---|---|---|
 | TM-KEY-ADD | new unknown 32-byte keys (see below) | High |
 | TM-PROG-REF | new keys matching well-known program ids | Low |
-| TM-CHECK-GONE | fewer immediates for Anchor check error codes (2001 has_one, 2002 signer, 2003 raw, 2004 owner, 2006 seeds, 2012 address, 3007 wrong owner program, 3010 not signer) | High |
-| TM-IX-CHANGE | handler set changed; names taken from `Instruction: X` log text and kept only if `sha256("global:x")[..8]` appears as an `lddw` immediate | Medium if added, else Low |
+| TM-CHECK-GONE | a handler reaches fewer immediates for Anchor check error codes (2001 has_one, 2002 signer, 2003 raw, 2004 owner, 2006 seeds, 2012 address, 3007 wrong owner program, 3010 not signer); program-wide counts if either side has no dispatch table | High |
+| TM-ERR-GONE | a handler reaches fewer custom error immediates (6000–6999) | Medium |
+| TM-IX-CHANGE | handler set (by discriminator) changed; unnamed handlers show as their discriminator | Medium if added, else Low |
 | TM-SYSCALL-ADD | call-site count of a syscall rose | High for `invoke_signed*`, Low for other sensitive syscalls, else Info |
 | TM-SYSCALL-DEL | call-site count fell | Info |
 | TM-CALLX-ADD | more `callx` sites | Medium |
@@ -110,6 +111,25 @@ and a single low-entropy limb doesn't either.
 distinct bytes, under 28 printable). Overlapping new windows are joined, so a
 longer random blob shows up once as `<first window> (start of an N-byte
 blob)`; at most 4096 new windows are examined.
+
+**Handlers (`handlers.rs`).** Anchor dispatches with
+`ldxdw rA, [rB+0]; lddw rC, disc; jeq rA, rC, stub`. The loader records every
+such compare (the `ldxdw` must be within 8 instructions and read offset 0).
+The dispatch table is the largest run of these whose `lddw`s are at most 8
+instructions apart, capped at 256 entries. Names come from `Instruction: X`
+log strings: each prefix of the CamelCase words is tried as snake_case, both
+as-is and with digits split off (`Sweep1` → `sweep1`, `sweep_1`), and kept if
+`sha256("global:name")[..8]` is a known discriminator. A build without logs
+still lists every handler, just by discriminator.
+
+**Per-handler checks.** Functions start at every internal call target and
+after every `exit`. From a handler's stub (up to 32 instructions, stopping at
+`ja`/`exit`) the walk follows internal calls and sums the error-code
+immediates (2000–3999, 6000–6999) of every function reached. Old and new
+handlers with the same discriminator are compared code by code, so a decoy
+check added to another handler no longer cancels a removed one. A decoy added
+inside code the same handler reaches still can. The walk has a total budget
+of 4M steps; past it the rule falls back to program-wide counts.
 
 **Retargets.** Normalization hides targets, so a branch moved by one
 instruction diffs as unchanged. The rule maps old lines to new lines through
@@ -243,7 +263,8 @@ to 60 s and fails on any `err`.
 - v2 (`--features v2`): `withdraw` accepts an unchecked authority, and a new
   `sweep` instruction moves the treasury to a hardcoded key via `invoke_signed`.
 - Actual findings (`fixtures/demo_report.json`): TM-KEY-ADD with the exact
-  sweep address, TM-CHECK-GONE for `ConstraintHasOne` 5 → 4, TM-IX-CHANGE `+ sweep`.
+  sweep address, TM-CHECK-GONE for `withdraw` (`ConstraintHasOne` 1 → 0,
+  `AccountNotSigner` 1 → 0), TM-IX-CHANGE `+ sweep`.
 
 ## 6. Toolchain notes
 
