@@ -326,10 +326,11 @@ fn watch_once(
     use tidemark_core::snapshots;
     let d = rpc::fetch(rpc_url, program)?;
     let slot = d.last_deploy_slot;
-    if !snapshots::store(dir, program, slot, &d.elf)? {
+    if snapshots::path_for(dir, program, slot).exists() {
         return Ok(());
     }
     let Some(prev) = snapshots::previous(dir, program, slot)? else {
+        snapshots::store(dir, program, slot, &d.elf)?;
         out!("{program}: baseline snapshot at slot {slot}");
         return Ok(());
     };
@@ -344,6 +345,7 @@ fn watch_once(
     if let Some((c, signer, registry)) = attest {
         attest_report(c, signer, registry, program, &r)?;
     }
+    snapshots::store(dir, program, slot, &d.elf)?;
     Ok(())
 }
 
