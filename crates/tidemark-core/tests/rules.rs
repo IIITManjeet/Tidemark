@@ -546,3 +546,69 @@ fn constants_that_are_only_added_are_reported_low() {
     assert_eq!(f.severity, Severity::Low);
     assert_eq!(f.detail, vec!["+ 0x12a05f200"]);
 }
+
+fn with_constants(values: &[(usize, u64)]) -> Program {
+    let norm: Vec<String> = values
+        .iter()
+        .map(|(_, v)| format!("lddw r1, {v:#x}"))
+        .collect();
+    let refs: Vec<&str> = norm.iter().map(|s| s.as_str()).collect();
+    let mut p = program(&refs);
+    p.flow = values
+        .iter()
+        .map(|&(pc, v)| tidemark_core::elf::Flow {
+            pc,
+            constant: Some(v),
+            ..Default::default()
+        })
+        .collect();
+    p
+}
+
+#[test]
+fn key_split_into_scattered_limbs_is_high() {
+    let limbs = [
+        (10, 0x9d1f_c2a4_5b7e_3860),
+        (60, 0x4ae1_07c9_d35f_b218),
+        (130, 0xe6b3_9a0d_712c_f485),
+        (200, 0x2c8f_e154_a96b_0d73),
+    ];
+    let old = with_constants(&[]);
+    let r = compare(&old, &with_constants(&limbs));
+    assert!(ids(&r).contains(&"TM-KEY-SPLIT"), "{:?}", ids(&r));
+    assert_eq!(r.risk, Severity::High);
+    let r = compare(&old, &with_constants(&limbs[..3]));
+    assert!(!ids(&r).contains(&"TM-KEY-SPLIT"));
+    let far: Vec<_> = limbs
+        .iter()
+        .enumerate()
+        .map(|(i, &(_, v))| (i * 1000, v))
+        .collect();
+    assert!(!ids(&compare(&old, &with_constants(&far))).contains(&"TM-KEY-SPLIT"));
+    let plain = [
+        (10, 0x1000),
+        (20, 0x2000_0000),
+        (30, 0xffff_ffff),
+        (40, 0x10_0000_0000),
+    ];
+    assert!(!ids(&compare(&old, &with_constants(&plain))).contains(&"TM-KEY-SPLIT"));
+}
+
+#[test]
+fn capped_analysis_is_reported() {
+    let old = program(&["exit"]);
+    let mut new = program(&["exit"]);
+    for i in 0..tidemark_core::elf::MAX_CONST_WINDOWS as u32 {
+        let mut k = [0u8; 32];
+        k[..4].copy_from_slice(&i.to_le_bytes());
+        new.consts32.insert(k);
+    }
+    let r = compare(&old, &new);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-PARTIAL")
+        .expect("partial finding");
+    assert_eq!(f.severity, Severity::Medium);
+    assert!(!ids(&compare(&old, &old)).contains(&"TM-PARTIAL"));
+}

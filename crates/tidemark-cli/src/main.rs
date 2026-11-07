@@ -290,6 +290,13 @@ fn review_deployed(rpc_url: &str, program: &str, old: &PathBuf) -> Result<Report
     Ok(diff::compare(&o, &n))
 }
 
+fn rules16(v: &str) -> [u8; 16] {
+    let mut rules = [0u8; 16];
+    let rv = v.as_bytes();
+    rules[..rv.len().min(16)].copy_from_slice(&rv[..rv.len().min(16)]);
+    rules
+}
+
 fn attest_report(
     c: &Ctx,
     signer: &SigningKey,
@@ -297,16 +304,13 @@ fn attest_report(
     program: &str,
     r: &Report,
 ) -> Result<()> {
-    let mut rules = [0u8; 16];
-    let rv = r.rules_version.as_bytes();
-    rules[..rv.len().min(16)].copy_from_slice(&rv[..rv.len().min(16)]);
     let input = submit::AttestInput {
         program: submit::decode_pubkey(program)?,
         old_code_hash: tidemark_core::parse_hash32(&r.old.sha256)?,
         new_code_hash: tidemark_core::parse_hash32(&r.new.sha256)?,
         report_hash: tidemark_core::parse_hash32(&verdict_hash(r))?,
         risk: verdict_risk(r),
-        rules_version: rules,
+        rules_version: rules16(r.rules_version),
         model_id: [0u8; 32],
     };
     let (att, index, sig) = c.attest(signer, registry, &input)?;
@@ -605,6 +609,15 @@ fn main() -> Result<()> {
             let mine = tidemark_core::parse_hash32(&verdict_hash(&r))?;
             if hex(&a.old_code_hash) != r.old.sha256 || hex(&a.new_code_hash) != r.new.sha256 {
                 bail!("entry #{index} reviewed different code than your snapshot and the deployed program");
+            }
+            if a.risk != verdict_risk(&r) || a.rules_version != rules16(r.rules_version) {
+                bail!(
+                    "entry #{index} records risk {} under {:?}, but the review it commits to is risk {} under {}; not approving",
+                    a.risk,
+                    String::from_utf8_lossy(&a.rules_version).trim_end_matches(' '),
+                    verdict_risk(&r),
+                    r.rules_version
+                );
             }
             if mine != a.report_hash {
                 bail!(

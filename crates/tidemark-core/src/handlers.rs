@@ -208,6 +208,10 @@ fn dispatch_table(all: &[(u64, usize, usize)]) -> &[(u64, usize, usize)] {
     best
 }
 
+pub fn has_dispatch(p: &Program) -> bool {
+    !dispatch_table(&p.dispatch).is_empty()
+}
+
 pub fn stray_discriminators(p: &Program) -> BTreeSet<u64> {
     let table: BTreeSet<u64> = dispatch_table(&p.dispatch).iter().map(|e| e.0).collect();
     p.dispatch

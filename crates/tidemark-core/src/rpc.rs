@@ -50,7 +50,7 @@ fn account(rpc: &str, key: &str) -> Result<(Vec<u8>, String)> {
     let r = call(
         rpc,
         "getAccountInfo",
-        json!([key, {"encoding": "base64", "commitment": "confirmed"}]),
+        json!([key, {"encoding": "base64", "commitment": "finalized"}]),
     )?;
     let val = &r["value"];
     if val.is_null() {

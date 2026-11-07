@@ -14,7 +14,7 @@ is, and writes every review to a public, hash-linked ledger on Solana.
 
 ```
 $ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
-Tidemark upgrade review  (tm-rules-0.4)
+Tidemark upgrade review  (tm-rules-0.5)
   old  99e7c4fe98f886be  20066 insns
   new  519015fa4879499f  20608 insns
   changed instructions: 996 (2.45%)
@@ -60,22 +60,25 @@ refused with a clear message instead of being mis-read.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
 
 ### 2. Upgrade risk rules · Shipped
-Deterministic, versioned rules (`tm-rules-0.4`) turn a diff into ranked findings:
+Deterministic, versioned rules (`tm-rules-0.5`) turn a diff into ranked findings:
 
 | Rule | What it catches |
 |---|---|
 | `TM-KEY-ADD` | New 32-byte keys, found anywhere in `.rodata` or rebuilt from four `lddw` immediates that are stored to, or compared against, consecutive 8-byte slots |
 | `TM-CHECK-GONE` | An instruction handler lost Anchor account-check sites (`has_one`, signer, owner, seeds, address), counted by error-code immediates in the code each handler can reach |
+| `TM-GUARD-GONE` | A conditional branch that leads into, or feeds, an error path was patched into an unconditional jump, retargeted to fall straight through, or deleted in a small edit, so the check still exists but can no longer fail |
 | `TM-ERR-GONE` | An instruction handler lost custom error checks (`require!`, error codes 6000+) |
 | `TM-IX-CHANGE` | Instruction handlers added or removed, read from the Anchor dispatch table; names confirmed by matching `sha256("global:<name>")[..8]` |
 | `TM-SYSCALL-ADD` | New `invoke_signed` and other sensitive syscall call sites |
 | `TM-CALLX-ADD` | New indirect calls with runtime-computed targets |
 | `TM-BRANCH-RETARGET` | A branch that looks unchanged now jumps to different code |
 | `TM-CALL-RETARGET` | A call that looks unchanged now calls a different function |
+| `TM-KEY-SPLIT` | Four or more new high-entropy 64-bit constants within a few hundred instructions: a key loaded in pieces that the stricter key rebuild did not match |
 | `TM-CONST-CHANGE` | 64-bit constants (not addresses, not handler discriminators) that are no longer used |
 | `TM-CONST-ADD` | New 64-bit constants (informational) |
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
+| `TM-PARTIAL` | Analysis hit a time or size limit, so findings may be missing |
 
 Well-known program ids (System, Token, Token-2022, ATA, …) are recognised and
 named, so a new reference to Token isn't mistaken for a planted key.
@@ -189,7 +192,7 @@ each review on the ledger, using the same path as `tidemark attest`.
 $ tidemark watch 5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3
 5pHTpt…: baseline snapshot at slot 519447118
 5pHTpt…: upgraded, slot 519447118 -> 519503311
-Tidemark upgrade review  (tm-rules-0.4) …
+Tidemark upgrade review  (tm-rules-0.5) …
 ```
 
 The watcher needs to be running before an upgrade to have the old version;
@@ -250,7 +253,9 @@ keys never share a process with untrusted input.
 - Showing findings inline in the editor is still on the roadmap.
 
 ### 15. Web app · Shipped (diff viewer and ledger feed)
-`web/` is a static site on top of the npm package; nothing runs on a server.
+`web/` is a Next.js app in TypeScript, styled with Tailwind, exported as a
+static site; nothing runs on a server. It loads the same WASM build as the npm
+package.
 - **Review**: drop the current and the new `.so` (or load the demo vault).
   The WASM engine produces the same findings, hunks and verdict hash as the CLI.
   Files never leave the browser.
@@ -261,20 +266,17 @@ keys never share a process with untrusted input.
   consistent but stale or fake chain, so the page says which view it trusted.
   Add a second RPC and it shows VERIFIED only if both agree on the head and
   every entry hash.
-- Restrained dark interface: near-black panels with fine rules, a serif for
-  headings, blue for actions and orange reserved for high-risk findings.
-  Severity is always written out as text as well as colour.
+- Landing page and tools in one responsive page: navy surfaces, royal-blue
+  accents, Outfit type and hand-drawn SVG illustrations. Colours, radii, glow
+  and breakpoints are Tailwind theme tokens in `web/app/globals.css`.
+  Severity is always written out as text as well as colour, and motion stops
+  under `prefers-reduced-motion`.
 
-Build it with `bash scripts/build-web.sh` (writes `site/`) and serve that
-folder with any static server, e.g. `python -m http.server -d site`.
+Build it with `bash scripts/build-web.sh` (writes `web/out/`) and serve that
+folder with any static server, e.g. `python -m http.server -d web/out`. Set
+`BASE_PATH=/Tidemark` when hosting under a subpath such as GitHub Pages. For
+development, run the build once and then `npm run dev` in `web/`.
 The authority census view is still on the roadmap.
-
-The visual language is **liquid glass**: panels are translucent layers with
-backdrop blur, soft refraction at the edges and light that follows depth, so
-the ledger feed and diff hunks read as stacked sheets over the chain. It
-respects `prefers-reduced-transparency` and `prefers-reduced-motion`, falling
-back to solid surfaces that keep WCAG AA contrast, so the effect never costs
-legibility.
 
 ---
 

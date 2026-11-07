@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #10152a;
+  --color-panel: #171e34;
+  --color-panel-2: #1e2742;
+  --color-line: #273152;
+  --color-line-2: #34406a;
+  --color-text: #f3f5fb;
+  --color-muted: #a7afc8;
+  --color-faint: #78819e;
+  --color-accent: #2f6bff;
+  --color-accent-2: #1f55e6;
+  --color-glow: #5b8cff;
+  --color-link: #8fb0ff;
+  --color-orange: #ff9a4d;
+  --color-red: #ff5d6c;
+  --color-amber: #f2c14e;
+  --color-green: #39d39a;
+  --font-sans: var(--font-outfit), system-ui, sans-serif;
+  --font-serif: var(--font-outfit), system-ui, sans-serif;
+  --font-mono: var(--font-plex), ui-monospace, monospace;
+  --radius-card: 1.5rem;
+  --shadow-glow: 0 0 80px -20px rgb(47 107 255 / 0.55);
+  --breakpoint-xs: 30rem;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply min-h-screen overflow-x-hidden bg-bg font-sans text-[15px] leading-relaxed text-text antialiased;
+    background-image:
+      radial-gradient(60rem 40rem at 85% -10%, rgb(47 107 255 / 0.18), transparent 60%),
+      radial-gradient(40rem 30rem at -10% 30%, rgb(91 140 255 / 0.08), transparent 60%);
+    background-repeat: no-repeat;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+}
+
+@utility label-caps {
+  @apply text-[11px] tracking-[0.1em] text-faint uppercase;
+}
+
+@utility panel {
+  @apply rounded-2xl border border-line bg-panel;
+}
+
+@utility card {
+  @apply rounded-(--radius-card) border border-line/70 bg-panel/80 backdrop-blur;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@utility animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+@utility animate-float-slow {
+  animation: float 9s ease-in-out infinite;
+}

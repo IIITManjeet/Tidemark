@@ -26,7 +26,7 @@ console.log(ledger.ok, ledger.entries);
 | `review(old, new)` | `{report, report_hash, verdict_hash, verdict_risk}`, same report as `tidemark diff --json` |
 | `inspect(bytes)` | sha256, size, SBPF version, syscalls, instruction handlers |
 | `verifyLedger(input)` | parses and verifies raw ledger accounts; `fetchLedger` gathers them over JSON-RPC |
-| `rulesVersion()` | the rules version, e.g. `tm-rules-0.4` |
+| `rulesVersion()` | the rules version, e.g. `tm-rules-0.5` |
 
 In Node, load the module with `initSync({ module: readFileSync(".../tidemark_bg.wasm") })`.
 

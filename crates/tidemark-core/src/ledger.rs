@@ -323,7 +323,7 @@ fn program_accounts(
     let list = crate::rpc::call(
         rpc,
         "getProgramAccounts",
-        json!([ledger, {"encoding": "base64", "commitment": "confirmed", "filters": filters}]),
+        json!([ledger, {"encoding": "base64", "commitment": "finalized", "filters": filters}]),
     )?;
     let mut out = Vec::new();
     for item in list
@@ -344,7 +344,7 @@ pub fn fetch_registry(rpc: &str, ledger: &str, registry: &str) -> Result<Registr
     let acc: Value = crate::rpc::call(
         rpc,
         "getAccountInfo",
-        json!([registry, {"encoding": "base64", "commitment": "confirmed"}]),
+        json!([registry, {"encoding": "base64", "commitment": "finalized"}]),
     )?;
     let v = &acc["value"];
     if v.is_null() {
