@@ -1,7 +1,11 @@
 use crate::submit::{find_pda, Pubkey};
-use anyhow::{bail, Context, Result};
+#[cfg(feature = "net")]
+use anyhow::bail;
+use anyhow::{Context, Result};
+#[cfg(feature = "net")]
 use base64::Engine;
 use serde::Serialize;
+#[cfg(feature = "net")]
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -278,14 +282,17 @@ pub fn verify(ledger: &Pubkey, s: &Snapshot) -> Result<Vec<EntryStatus>, ChainEr
     Ok(out)
 }
 
+#[cfg(feature = "net")]
 fn b64(s: &str) -> Result<Vec<u8>> {
     Ok(base64::engine::general_purpose::STANDARD.decode(s)?)
 }
 
+#[cfg(feature = "net")]
 fn decode_key(s: &str) -> Result<Pubkey> {
     crate::submit::decode_pubkey(s)
 }
 
+#[cfg(feature = "net")]
 fn program_accounts(
     rpc: &str,
     ledger: &str,
@@ -315,6 +322,7 @@ fn program_accounts(
     Ok(out)
 }
 
+#[cfg(feature = "net")]
 pub fn fetch_registry(rpc: &str, ledger: &str, registry: &str) -> Result<Registry> {
     let acc: Value = crate::rpc::call(
         rpc,
@@ -332,31 +340,46 @@ pub fn fetch_registry(rpc: &str, ledger: &str, registry: &str) -> Result<Registr
     parse_registry(decode_key(registry)?, &b64(data)?)
 }
 
+#[cfg(feature = "net")]
 pub fn fetch(rpc: &str, ledger: &str, registry: &str) -> Result<Snapshot> {
     let reg = fetch_registry(rpc, ledger, registry)?;
-    let attestations = program_accounts(rpc, ledger, ATTESTATION_LEN, Some((DISC, registry)))?
-        .into_iter()
-        .map(|(k, d)| parse_attestation(k, &d))
+    let attestations = program_accounts(rpc, ledger, ATTESTATION_LEN, Some((DISC, registry)))?;
+    let reviewers = program_accounts(rpc, ledger, REVIEWER_LEN, Some((DISC, registry)))?;
+    let approvals = program_accounts(rpc, ledger, APPROVAL_LEN, None)?;
+    snapshot_from(reg, &attestations, &reviewers, &approvals)
+}
+
+pub type RawAccount = (Pubkey, Vec<u8>);
+
+pub fn snapshot_from(
+    registry: Registry,
+    attestations: &[RawAccount],
+    reviewers: &[RawAccount],
+    approvals: &[RawAccount],
+) -> Result<Snapshot> {
+    let attestations = attestations
+        .iter()
+        .map(|(k, d)| parse_attestation(*k, d))
         .collect::<Result<Vec<_>>>()?;
-    let mut reviewers = BTreeMap::new();
-    for (_, d) in program_accounts(rpc, ledger, REVIEWER_LEN, Some((DISC, registry)))? {
-        let (reg_key, r) = parse_reviewer(&d)?;
-        if reg_key == reg.address {
-            reviewers.insert(r.key, r);
+    let mut by_key = BTreeMap::new();
+    for (_, d) in reviewers {
+        let (reg_key, r) = parse_reviewer(d)?;
+        if reg_key == registry.address {
+            by_key.insert(r.key, r);
         }
     }
     let ours: Vec<Pubkey> = attestations.iter().map(|a| a.address).collect();
-    let approvals = program_accounts(rpc, ledger, APPROVAL_LEN, None)?
-        .into_iter()
-        .map(|(k, d)| parse_approval(k, &d))
+    let approvals = approvals
+        .iter()
+        .map(|(k, d)| parse_approval(*k, d))
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .filter(|ap| ours.contains(&ap.attestation))
         .collect();
     Ok(Snapshot {
-        registry: reg,
+        registry,
         attestations,
-        reviewers,
+        reviewers: by_key,
         approvals,
     })
 }

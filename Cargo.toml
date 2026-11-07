@@ -10,7 +10,7 @@ license = "MIT"
 repository = "https://github.com/IIITManjeet/Tidemark"
 
 [workspace.dependencies]
-tidemark-core = { path = "crates/tidemark-core" }
+tidemark-core = { path = "crates/tidemark-core", default-features = false }
 anyhow = "1"
 base64 = "0.22"
 bs58 = "0.5"

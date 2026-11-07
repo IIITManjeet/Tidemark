@@ -18,7 +18,15 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 similar.workspace = true
-ureq.workspace = true
+ureq = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+similar = { workspace = true, features = ["wasm32_web_time"] }
+web-time = "1"
+
+[features]
+default = ["net"]
+net = ["dep:ureq"]
 
 [dev-dependencies]
 bs58.workspace = true
