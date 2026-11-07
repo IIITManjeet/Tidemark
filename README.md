@@ -73,6 +73,7 @@ Deterministic, versioned rules (`tm-rules-0.3`) turn a diff into ranked findings
 | `TM-BRANCH-RETARGET` | A branch that looks unchanged now jumps to different code |
 | `TM-CALL-RETARGET` | A call that looks unchanged now calls a different function |
 | `TM-CONST-CHANGE` | 64-bit constants (not addresses, not handler discriminators) that are no longer used |
+| `TM-CONST-ADD` | New 64-bit constants (informational) |
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
 
@@ -248,8 +249,12 @@ keys never share a process with untrusted input.
   The WASM engine produces the same findings, hunks and verdict hash as the CLI.
   Files never leave the browser.
 - **Ledger**: enter an RPC endpoint, ledger program and registry. The page
-  pulls the raw accounts and verifies the hash chain, PDAs, reviewer allowlist
-  and quorum itself, then lists each attestation with its risk and approvals.
+  pulls the raw accounts at `finalized` commitment and verifies the hash
+  chain, PDAs, reviewer allowlist and quorum itself, then lists each
+  attestation with its risk and approvals. A single RPC could serve a
+  consistent but stale or fake chain, so the page says which view it trusted.
+  Add a second RPC and it shows VERIFIED only if both agree on the head and
+  every entry hash.
 - Restrained dark interface: near-black panels with fine rules, a serif for
   headings, blue for actions and orange reserved for high-risk findings.
   Severity is always written out as text as well as colour.
