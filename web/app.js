@@ -165,7 +165,7 @@ function renderLedger(v) {
   chain.replaceChildren(
     el("small", {}, "Chain"),
     el("b", {}, v.ok ? "VERIFIED" : "BROKEN"),
-    el("small", {}, v.ok ? "links, addresses and quorums check out" : v.error),
+    el("small", {}, v.ok ? "links, addresses and quorums check out, as served by this RPC" : v.error),
   );
   $("count").textContent = v.registry.count;
   $("quorum").textContent = `${v.registry.threshold} of ${v.registry.active_reviewers}`;
