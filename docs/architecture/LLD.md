@@ -31,6 +31,11 @@ platform-tools compiler lags stable Rust; each workspace has its own lockfile.
 
 ### 2.1 ELF loading (`elf.rs`)
 
+The SBPF version comes from the header: `e_machine` 247 with `e_flags` 0 is v0,
+247 with `0x20` is v2, and 263 carries the version in `e_flags` (0–3). Only v0
+and v1 are decoded; anything else is refused before analysis.
+
+
 | Field | Source |
 |---|---|
 | `sha256`, `size` | whole file |
@@ -123,7 +128,7 @@ says the hunks are approximate.
 
 | Command | Behaviour | Exit code |
 |---|---|---|
-| `diff OLD NEW [--json PATH] [--hunks N]` | summary, findings, hunks, report hash | 2 if risk is High or Critical |
+| `diff OLD NEW [--json PATH] [--hunks N] [--fail-on LEVEL]` | summary, findings, hunks, verdict and report hashes | 2 if risk ≥ LEVEL (default high); 1 on bad input |
 | `inspect FILE` | hash, size, syscalls, callx, constants, security.txt | 0 |
 | `fetch PROGRAM_ID --rpc URL -o FILE` | writes ELF, prints authority and last deploy slot | 0 |
 

@@ -5,6 +5,7 @@ use tidemark_core::elf::{Program, WideLoad};
 
 fn program(norm: &[&str]) -> Program {
     Program {
+        sbpf_version: 0,
         sha256: "00".repeat(32),
         size: norm.len() * 8,
         insn_count: norm.len(),
