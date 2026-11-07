@@ -1,10 +1,10 @@
 use crate::elf::{Program, WideLoad};
+use crate::handlers::{self, Handler};
 use crate::syscalls;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use similar::{Algorithm, ChangeTag, TextDiff};
-use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -117,69 +117,79 @@ const ANCHOR_CHECKS: &[(i64, &str)] = &[
 ];
 
 const DIFF_DEADLINE: Duration = Duration::from_secs(10);
-const MAX_NAME_LEN: usize = 64;
-const MAX_NAME_WORDS: usize = 8;
 const KEY_PC_WINDOW: usize = 64;
 
-fn discriminator(name: &str) -> u64 {
-    let h = Sha256::digest(format!("global:{name}").as_bytes());
-    u64::from_le_bytes(h[..8].try_into().expect("8 bytes"))
-}
-
-fn camel_words(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    for (i, c) in s.char_indices().skip(1) {
-        if c.is_ascii_uppercase() {
-            out.push(&s[start..i]);
-            start = i;
-        }
+fn check_name(code: i64) -> String {
+    match ANCHOR_CHECKS.iter().find(|(c, _)| *c == code) {
+        Some((_, n)) => format!("{n} ({code})"),
+        None if code >= 6000 => format!("custom error {code}"),
+        None => format!("error {code}"),
     }
-    out.push(&s[start..]);
-    out
 }
 
-fn handler_names(p: &Program) -> Vec<(String, u64)> {
-    let wide: BTreeSet<u64> = p.wide.iter().map(|w| w.value).collect();
-    let needle = b"Instruction: ";
-    let mut out = Vec::new();
-    let mut i = 0;
-    while let Some(pos) = p.rodata[i..]
-        .windows(needle.len())
-        .position(|w| w == needle)
-    {
-        let at = i + pos + needle.len();
-        let run: String = p.rodata[at..]
-            .iter()
-            .take_while(|b| b.is_ascii_alphanumeric())
-            .take(MAX_NAME_LEN)
-            .map(|b| *b as char)
-            .collect();
-        let mut words = camel_words(&run);
-        words.truncate(MAX_NAME_WORDS);
-        for k in (1..=words.len()).rev() {
-            let name = words[..k]
-                .iter()
-                .map(|w| w.to_ascii_lowercase())
-                .collect::<Vec<_>>()
-                .join("_");
-            let d = discriminator(&name);
-            if wide.contains(&d) {
-                out.push((name, d));
-                break;
+fn check_findings(
+    old: &Program,
+    new: &Program,
+    oh: &BTreeMap<u64, Handler>,
+    nh: &BTreeMap<u64, Handler>,
+    findings: &mut Vec<Finding>,
+) {
+    let (mut anchor, mut custom) = (Vec::new(), Vec::new());
+    let per_handler = oh.values().any(|h| h.dispatched) && nh.values().any(|h| h.dispatched);
+    if per_handler {
+        for (d, a) in oh.iter().filter(|(_, h)| h.dispatched) {
+            let Some(b) = nh.get(d).filter(|h| h.dispatched) else {
+                continue;
+            };
+            for (code, &o) in &a.checks {
+                let n = b.checks.get(code).copied().unwrap_or(0);
+                if n >= o {
+                    continue;
+                }
+                let line = format!(
+                    "{}: {}: {o} → {n} check sites",
+                    b.label(*d),
+                    check_name(*code)
+                );
+                if *code >= 6000 {
+                    custom.push(line);
+                } else if ANCHOR_CHECKS.iter().any(|(c, _)| c == code) {
+                    anchor.push(line);
+                }
             }
         }
-        i = at;
+    } else {
+        for (code, name) in ANCHOR_CHECKS {
+            let o = old.imm_counts.get(code).copied().unwrap_or(0);
+            let n = new.imm_counts.get(code).copied().unwrap_or(0);
+            if n < o {
+                anchor.push(format!("{name} ({code}): {o} → {n} check sites"));
+            }
+        }
     }
-    out
-}
-
-fn anchor_handlers(p: &Program) -> BTreeSet<String> {
-    handler_names(p).into_iter().map(|(n, _)| n).collect()
-}
-
-fn handler_discriminators(p: &Program) -> Vec<u64> {
-    handler_names(p).into_iter().map(|(_, d)| d).collect()
+    for (id, sev, title, detail) in [
+        (
+            "TM-CHECK-GONE",
+            Severity::High,
+            "Account checks were removed",
+            anchor,
+        ),
+        (
+            "TM-ERR-GONE",
+            Severity::Medium,
+            "Custom error checks were removed",
+            custom,
+        ),
+    ] {
+        if !detail.is_empty() {
+            findings.push(Finding {
+                id,
+                severity: sev,
+                title: title.into(),
+                detail,
+            });
+        }
+    }
 }
 
 const KEY_DISTINCT: usize = 20;
@@ -283,12 +293,8 @@ fn rodata_keys(windows: Vec<[u8; 32]>) -> (Vec<String>, usize) {
     (out, total)
 }
 
-fn const_findings(old: &Program, new: &Program, findings: &mut Vec<Finding>) {
+fn const_findings(old: &Program, new: &Program, skip: &BTreeSet<u64>, findings: &mut Vec<Finding>) {
     let set = |p: &Program| -> BTreeSet<u64> { p.flow.iter().filter_map(|f| f.constant).collect() };
-    let skip: BTreeSet<u64> = handler_discriminators(old)
-        .into_iter()
-        .chain(handler_discriminators(new))
-        .collect();
     let (a, b) = (set(old), set(new));
     let gone: Vec<u64> = a
         .difference(&b)
@@ -560,10 +566,8 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let skip: BTreeSet<u64> = handler_discriminators(old)
-        .into_iter()
-        .chain(handler_discriminators(new))
-        .collect();
+    let (oh, nh) = (handlers::handlers(old), handlers::handlers(new));
+    let skip: BTreeSet<u64> = oh.keys().chain(nh.keys()).copied().collect();
     let mut before = assembled_keys(old, &skip);
     before.extend(old.consts32.iter().copied());
     let fresh_inline: Vec<[u8; 32]> = assembled_keys(new, &skip)
@@ -609,9 +613,16 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let (oi, ni) = (anchor_handlers(old), anchor_handlers(new));
-    let added_ix: Vec<_> = ni.difference(&oi).map(|s| format!("+ {s}")).collect();
-    let removed_ix: Vec<_> = oi.difference(&ni).map(|s| format!("- {s}")).collect();
+    let added_ix: Vec<_> = nh
+        .iter()
+        .filter(|(d, _)| !oh.contains_key(d))
+        .map(|(d, h)| format!("+ {}", h.label(*d)))
+        .collect();
+    let removed_ix: Vec<_> = oh
+        .iter()
+        .filter(|(d, _)| !nh.contains_key(d))
+        .map(|(d, h)| format!("- {}", h.label(*d)))
+        .collect();
     if !added_ix.is_empty() || !removed_ix.is_empty() {
         let mut d = added_ix.clone();
         d.extend(removed_ix);
@@ -627,22 +638,7 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let mut gone = Vec::new();
-    for (code, name) in ANCHOR_CHECKS {
-        let o = old.imm_counts.get(code).copied().unwrap_or(0);
-        let n = new.imm_counts.get(code).copied().unwrap_or(0);
-        if n < o {
-            gone.push(format!("{name} ({code}): {o} → {n} check sites"));
-        }
-    }
-    if !gone.is_empty() {
-        findings.push(Finding {
-            id: "TM-CHECK-GONE",
-            severity: Severity::High,
-            title: "Account checks were removed".into(),
-            detail: gone,
-        });
-    }
+    check_findings(old, new, &oh, &nh, &mut findings);
 
     if old.security_txt != new.security_txt {
         findings.push(Finding {
@@ -670,7 +666,7 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         .diff_lines(&a, &b);
     let diff_exact = started.elapsed() < DIFF_DEADLINE;
     retarget_findings(old, new, &td, &mut findings);
-    const_findings(old, new, &mut findings);
+    const_findings(old, new, &skip, &mut findings);
     let mut changed = 0usize;
     for c in td.iter_all_changes() {
         if c.tag() != ChangeTag::Equal {

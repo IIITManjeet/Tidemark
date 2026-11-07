@@ -24,6 +24,8 @@ fn program(norm: &[&str]) -> Program {
         rodata: Vec::new(),
         security_txt: None,
         flow: Vec::new(),
+        dispatch: Vec::new(),
+        error_codes: Vec::new(),
     }
 }
 
@@ -313,4 +315,76 @@ fn rodata_blob_is_reported_once() {
     let d = key_detail(&compare(&a, &b));
     assert_eq!(d.len(), 1, "{d:?}");
     assert!(d[0].ends_with("(start of a 40-byte blob)"), "{d:?}");
+}
+
+fn two_handlers(codes: &[(usize, i64)]) -> Program {
+    let mut norm = vec!["mov64 r0, 0"; 40];
+    for k in [11, 21] {
+        norm[k] = "ja <l>";
+    }
+    for k in [34, 39] {
+        norm[k] = "exit";
+    }
+    let mut p = program(&norm);
+    p.flow = (0..40)
+        .map(|pc| tidemark_core::elf::Flow {
+            pc,
+            ..Default::default()
+        })
+        .collect();
+    for (at, to) in [(10, 30), (20, 35)] {
+        p.flow[at].target = Some(to);
+        p.flow[at].is_call = true;
+    }
+    p.dispatch = vec![(0xaaaa, 10, 0), (0xbbbb, 20, 3)];
+    p.error_codes = codes.to_vec();
+    for (_, c) in codes {
+        *p.imm_counts.entry(*c).or_default() += 1;
+    }
+    p
+}
+
+#[test]
+fn decoy_check_in_another_handler_does_not_hide_removal() {
+    let a = two_handlers(&[(31, 2001)]);
+    let b = two_handlers(&[(36, 2001)]);
+    let r = compare(&a, &b);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-CHECK-GONE")
+        .expect("check finding");
+    assert_eq!(
+        f.detail,
+        vec!["0x000000000000aaaa: ConstraintHasOne (2001): 1 → 0 check sites"]
+    );
+}
+
+#[test]
+fn removed_custom_error_is_reported() {
+    let a = two_handlers(&[(32, 6001)]);
+    let b = two_handlers(&[]);
+    let r = compare(&a, &b);
+    assert!(ids(&r).contains(&"TM-ERR-GONE"));
+    assert!(!ids(&r).contains(&"TM-CHECK-GONE"));
+}
+
+#[test]
+fn handler_without_log_is_found_from_dispatch() {
+    let a = two_handlers(&[]);
+    let mut b = two_handlers(&[]);
+    b.dispatch.push((0xcccc, 20, 6));
+    let r = compare(&a, &b);
+    let f = r.findings.iter().find(|f| f.id == "TM-IX-CHANGE").unwrap();
+    assert_eq!(f.detail, vec!["+ 0x000000000000cccc"]);
+}
+
+#[test]
+fn handler_name_with_digits_is_matched() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    with_handlers(&mut b, &[("Sweep1", "sweep_1")]);
+    let r = compare(&a, &b);
+    let f = r.findings.iter().find(|f| f.id == "TM-IX-CHANGE").unwrap();
+    assert_eq!(f.detail, vec!["+ sweep_1"]);
 }

@@ -31,7 +31,8 @@
       "severity": "high",
       "title": "Account checks were removed",
       "detail": [
-        "ConstraintHasOne (2001): 5 → 4 check sites"
+        "withdraw: ConstraintHasOne (2001): 1 → 0 check sites",
+        "withdraw: AccountNotSigner (3010): 1 → 0 check sites"
       ]
     },
     {
