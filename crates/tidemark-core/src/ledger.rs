@@ -13,10 +13,10 @@ pub const ATTESTATION_LEN: usize =
     DISC + 32 + 8 + 32 + 32 + 32 + 32 + 1 + 16 + 32 + 32 + 8 + 32 + 32 + 1 + 1 + 1;
 pub const APPROVAL_LEN: usize = DISC + 32 + 32 + 8 + 1;
 
-fn discriminator(name: &str) -> [u8; 8] {
-    let h = Sha256::digest(format!("account:{name}").as_bytes());
-    h[..8].try_into().expect("8 bytes")
-}
+const REGISTRY_DISC: [u8; 8] = [6, 226, 98, 169, 180, 69, 111, 252];
+const REVIEWER_DISC: [u8; 8] = [130, 144, 184, 246, 190, 126, 132, 89];
+const ATTESTATION_DISC: [u8; 8] = [46, 168, 155, 156, 20, 220, 145, 188];
+const APPROVAL_DISC: [u8; 8] = [233, 9, 153, 49, 11, 222, 59, 130];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Attestation {
@@ -77,19 +77,16 @@ impl Reader<'_> {
     }
 }
 
-fn body<'a>(data: &'a [u8], len: usize, name: &str) -> Result<Reader<'a>> {
-    if data.len() < len || data[..DISC] != discriminator(name) {
-        bail!("not a {name} account");
-    }
-    Ok(Reader(&data[DISC..len]))
+fn body<'a>(data: &'a [u8], len: usize, disc: &[u8; 8]) -> Option<Reader<'a>> {
+    (data.len() >= len && data[..DISC] == *disc).then(|| Reader(&data[DISC..len]))
 }
 
-pub fn parse_registry(address: Pubkey, data: &[u8]) -> Result<Registry> {
-    let mut r = body(data, REGISTRY_LEN, "RegistryV2")?;
+fn registry_from(address: Pubkey, data: &[u8]) -> Option<Registry> {
+    let mut r = body(data, REGISTRY_LEN, &REGISTRY_DISC)?;
     let authority = r.take();
     let pending_authority = r.take();
     let _name: [u8; 32] = r.take();
-    Ok(Registry {
+    Some(Registry {
         address,
         authority,
         pending_authority,
@@ -100,9 +97,9 @@ pub fn parse_registry(address: Pubkey, data: &[u8]) -> Result<Registry> {
     })
 }
 
-pub fn parse_attestation(address: Pubkey, data: &[u8]) -> Result<Attestation> {
-    let mut r = body(data, ATTESTATION_LEN, "AttestationV2")?;
-    Ok(Attestation {
+fn attestation_from(address: Pubkey, data: &[u8]) -> Option<Attestation> {
+    let mut r = body(data, ATTESTATION_LEN, &ATTESTATION_DISC)?;
+    Some(Attestation {
         address,
         registry: r.take(),
         index: r.u64(),
@@ -122,21 +119,37 @@ pub fn parse_attestation(address: Pubkey, data: &[u8]) -> Result<Attestation> {
     })
 }
 
-pub fn parse_reviewer(data: &[u8]) -> Result<(Pubkey, Reviewer)> {
-    let mut r = body(data, REVIEWER_LEN, "Reviewer")?;
+fn reviewer_from(data: &[u8]) -> Option<(Pubkey, Reviewer)> {
+    let mut r = body(data, REVIEWER_LEN, &REVIEWER_DISC)?;
     let registry = r.take();
     let key = r.take();
     let active = r.u8() == 1;
-    Ok((registry, Reviewer { key, active }))
+    Some((registry, Reviewer { key, active }))
 }
 
-pub fn parse_approval(address: Pubkey, data: &[u8]) -> Result<Approval> {
-    let mut r = body(data, APPROVAL_LEN, "Approval")?;
-    Ok(Approval {
+fn approval_from(address: Pubkey, data: &[u8]) -> Option<Approval> {
+    let mut r = body(data, APPROVAL_LEN, &APPROVAL_DISC)?;
+    Some(Approval {
         address,
         attestation: r.take(),
         reviewer: r.take(),
     })
+}
+
+pub fn parse_registry(address: Pubkey, data: &[u8]) -> Result<Registry> {
+    registry_from(address, data).context("not a RegistryV2 account")
+}
+
+pub fn parse_attestation(address: Pubkey, data: &[u8]) -> Result<Attestation> {
+    attestation_from(address, data).context("not an AttestationV2 account")
+}
+
+pub fn parse_reviewer(data: &[u8]) -> Result<(Pubkey, Reviewer)> {
+    reviewer_from(data).context("not a Reviewer account")
+}
+
+pub fn parse_approval(address: Pubkey, data: &[u8]) -> Result<Approval> {
+    approval_from(address, data).context("not an Approval account")
 }
 
 pub fn entry_hash(a: &Attestation) -> [u8; 32] {
@@ -352,6 +365,19 @@ pub fn fetch(rpc: &str, ledger: &str, registry: &str) -> Result<Snapshot> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn pinned_discriminators_match_anchor() {
+        for (name, d) in [
+            ("RegistryV2", REGISTRY_DISC),
+            ("Reviewer", REVIEWER_DISC),
+            ("AttestationV2", ATTESTATION_DISC),
+            ("Approval", APPROVAL_DISC),
+        ] {
+            let h = Sha256::digest(format!("account:{name}").as_bytes());
+            assert_eq!(h[..8], d, "{name}");
+        }
+    }
+
     const LEDGER: Pubkey = [42u8; 32];
 
     fn chain(n: u64) -> Snapshot {
@@ -520,20 +546,46 @@ mod proofs {
     use super::*;
 
     #[kani::proof]
-    #[kani::unwind(2)]
+    #[kani::unwind(9)]
     fn parse_registry_never_panics() {
         let data: [u8; REGISTRY_LEN] = kani::any();
         let len: usize = kani::any();
         kani::assume(len <= REGISTRY_LEN);
-        let _ = parse_registry([0; 32], &data[..len]);
+        let r = registry_from([0; 32], &data[..len]);
+        assert_eq!(
+            r.is_some(),
+            len == REGISTRY_LEN && data[..DISC] == REGISTRY_DISC
+        );
     }
 
     #[kani::proof]
-    #[kani::unwind(2)]
+    #[kani::unwind(9)]
     fn parse_attestation_never_panics() {
         let data: [u8; ATTESTATION_LEN] = kani::any();
         let len: usize = kani::any();
         kani::assume(len <= ATTESTATION_LEN);
-        let _ = parse_attestation([0; 32], &data[..len]);
+        let a = attestation_from([0; 32], &data[..len]);
+        assert_eq!(
+            a.is_some(),
+            len == ATTESTATION_LEN && data[..DISC] == ATTESTATION_DISC
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn parse_reviewer_never_panics() {
+        let data: [u8; REVIEWER_LEN] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= REVIEWER_LEN);
+        let _ = reviewer_from(&data[..len]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(9)]
+    fn parse_approval_never_panics() {
+        let data: [u8; APPROVAL_LEN] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= APPROVAL_LEN);
+        let _ = approval_from([0; 32], &data[..len]);
     }
 }
