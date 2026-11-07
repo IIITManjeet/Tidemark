@@ -322,6 +322,8 @@ fn extract_strings(data: &[u8], out: &mut BTreeSet<String>) {
     flush(&mut cur, out);
 }
 
+pub const MAX_CONST_WINDOWS: usize = 1 << 16;
+
 fn extract_consts(data: &[u8], out: &mut BTreeSet<[u8; 32]>) {
     if data.len() < 32 {
         return;
@@ -350,6 +352,9 @@ fn extract_consts(data: &[u8], out: &mut BTreeSet<[u8; 32]>) {
             add(data[i + 31], 1, &mut distinct, &mut printable);
         }
         if distinct >= 24 && printable < 28 {
+            if out.len() >= MAX_CONST_WINDOWS {
+                return;
+            }
             let mut k = [0u8; 32];
             k.copy_from_slice(&data[i..i + 32]);
             out.insert(k);
@@ -475,6 +480,28 @@ mod tests {
             extract_consts(&data, &mut fast);
             assert_eq!(fast, naive_consts(&data), "round {round}");
         }
+    }
+
+    #[test]
+    fn huge_random_rodata_is_capped() {
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        let data: Vec<u8> = (0..8 << 20)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        let t = std::time::Instant::now();
+        let mut out = BTreeSet::new();
+        extract_consts(&data, &mut out);
+        assert_eq!(out.len(), MAX_CONST_WINDOWS);
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(3),
+            "{:?}",
+            t.elapsed()
+        );
     }
 
     #[test]
