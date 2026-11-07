@@ -318,6 +318,9 @@ fn print_judgement(j: &tidemark_core::judge::Judgement) {
             out!("  {line}");
         }
     }
+    if let Some(e) = &j.explanation_error {
+        out!("  explanation failed: {e}");
+    }
     out!("");
     for t in &j.questions {
         let cites = if t.cites.is_empty() {
@@ -687,6 +690,19 @@ fn main() -> Result<()> {
             let c = ctx(&chain, &k)?;
             let reg = submit::decode_pubkey(&registry)?;
             let snap = ledger::fetch(&chain.rpc, &chain.ledger, &registry)?;
+            if let Err(e) = ledger::verify(&c.ledger, &snap) {
+                bail!(
+                    "the chain served by {} does not verify ({e:?}); not approving",
+                    chain.rpc
+                );
+            }
+            if snap.registry.layout != c.layout {
+                bail!(
+                    "registry layout {:?} does not match the ledger program ({:?})",
+                    snap.registry.layout,
+                    c.layout
+                );
+            }
             let a = snap
                 .attestations
                 .iter()
