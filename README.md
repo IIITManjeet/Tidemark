@@ -63,7 +63,7 @@ Deterministic, versioned rules (`tm-rules-0.3`) turn a diff into ranked findings
 
 | Rule | What it catches |
 |---|---|
-| `TM-KEY-ADD` | New 32-byte keys, recovered from `.rodata` or rebuilt from four `lddw` immediates stored to consecutive stack slots |
+| `TM-KEY-ADD` | New 32-byte keys, found anywhere in `.rodata` or rebuilt from four `lddw` immediates that are stored to, or compared against, consecutive 8-byte slots |
 | `TM-CHECK-GONE` | Fewer Anchor account-check sites (`has_one`, signer, owner, seeds, address), counted by their error-code immediates |
 | `TM-IX-CHANGE` | Instruction handlers added or removed, each name confirmed by matching `sha256("global:<name>")[..8]` in the code |
 | `TM-SYSCALL-ADD` | New `invoke_signed` and other sensitive syscall call sites |
@@ -79,8 +79,8 @@ named, so a new reference to Token isn't mistaken for a planted key.
 
 These rules are heuristics over compiled code, tuned on Anchor programs. They
 catch the demo backdoor exactly, but a determined attacker can shape code to
-avoid them (for example comparing against a key instead of storing it, or
-reusing an existing CPI call site). Treat a clean report as "nothing obvious
+avoid them (for example splitting a key across functions, or reusing an
+existing CPI call site). Treat a clean report as "nothing obvious
 changed", not as proof of safety. Known gaps are tracked as GitHub issues.
 
 ### 3. Quorum-signed attestation ledger · Shipped (live on devnet)

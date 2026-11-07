@@ -90,13 +90,26 @@ absolute branch or internal-call target and the constant, if any.
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
 
 **Key recovery.** Compiled Rust rarely keeps a `Pubkey` constant as 32
-contiguous bytes. It loads it as four 64-bit `lddw` immediates and stores
-each with `stxdw` to `[base + o]`, `[base + o+8]`, `[base + o+16]`,
-`[base + o+24]`. The loader records, for every `lddw`, the first `stxdw` of
-that register within the next 8 instructions. A key is reported when four new,
-high-entropy immediates (6+ distinct bytes, upper half above 0x10, not a
-handler discriminator) land in consecutive slots of one base register within
-64 instructions. 32-byte windows in `.rodata` are still checked as well.
+contiguous bytes. It loads it as four 64-bit `lddw` immediates and either
+stores each with `stxdw` to `[base + o]` … `[base + o+24]`, or compares each
+with `jeq`/`jne` against a value loaded by `ldxdw` from such a slot. For every
+`lddw` the loader looks up to 32 instructions ahead, stopping if the register
+is overwritten (any LD, LDX or ALU write, or a call for r0–r5), and records
+the store slot, or failing that the slot of the compared value. Store and
+compare slots are kept apart.
+
+Keys are assembled per program: four non-zero immediates (not handler
+discriminators) in consecutive slots of one base register within 64
+instructions, accepted if the 32 bytes hold 20+ distinct values. The rule
+then reports keys assembled in the new program that were neither assembled in
+the old one nor present in its `.rodata`. Comparing whole keys rather than
+limbs means limbs planted ahead of time in an older version don't hide a key,
+and a single low-entropy limb doesn't either.
+
+`.rodata` is scanned with a sliding 32-byte window at every offset (24+
+distinct bytes, under 28 printable). Overlapping new windows are joined, so a
+longer random blob shows up once as `<first window> (start of an N-byte
+blob)`; at most 4096 new windows are examined.
 
 **Retargets.** Normalization hides targets, so a branch moved by one
 instruction diffs as unchanged. The rule maps old lines to new lines through
