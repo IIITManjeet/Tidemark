@@ -16,11 +16,71 @@ pub const REVIEWER_LEN: usize = DISC + 32 + 32 + 1 + 8 + 1;
 pub const ATTESTATION_LEN: usize =
     DISC + 32 + 8 + 32 + 32 + 32 + 32 + 1 + 16 + 32 + 32 + 8 + 32 + 32 + 1 + 1 + 1;
 pub const APPROVAL_LEN: usize = DISC + 32 + 32 + 8 + 1;
+pub const REGISTRY3_LEN: usize = REGISTRY_LEN + 32 + 8;
+pub const ATTESTATION3_LEN: usize = ATTESTATION_LEN + 32 + 8 + 8;
+pub const APPROVAL3_LEN: usize = DISC + 32 + 32 + 32 + 8 + 32 + 1;
 
 const REGISTRY_DISC: [u8; 8] = [6, 226, 98, 169, 180, 69, 111, 252];
 const REVIEWER_DISC: [u8; 8] = [130, 144, 184, 246, 190, 126, 132, 89];
 const ATTESTATION_DISC: [u8; 8] = [46, 168, 155, 156, 20, 220, 145, 188];
 const APPROVAL_DISC: [u8; 8] = [233, 9, 153, 49, 11, 222, 59, 130];
+const REGISTRY3_DISC: [u8; 8] = [54, 147, 83, 16, 117, 209, 34, 174];
+const ATTESTATION3_DISC: [u8; 8] = [218, 182, 88, 51, 72, 67, 171, 139];
+const APPROVAL3_DISC: [u8; 8] = [251, 153, 135, 206, 89, 173, 63, 165];
+
+pub const APPROVAL_DOMAIN: &[u8] = b"tidemark/approval/v1";
+pub const V2_LEDGERS: [&str; 1] = ["BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc"];
+
+pub fn layout_for(ledger: &str) -> Layout {
+    if V2_LEDGERS.contains(&ledger) {
+        Layout::V2
+    } else {
+        Layout::V3
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum Layout {
+    V2,
+    V3,
+}
+
+impl Layout {
+    pub fn registry_seed(self) -> &'static [u8] {
+        match self {
+            Layout::V2 => b"registry2",
+            Layout::V3 => b"registry3",
+        }
+    }
+
+    pub fn attestation_seed(self) -> &'static [u8] {
+        match self {
+            Layout::V2 => b"attest2",
+            Layout::V3 => b"attest3",
+        }
+    }
+
+    pub fn attestation_len(self) -> usize {
+        match self {
+            Layout::V2 => ATTESTATION_LEN,
+            Layout::V3 => ATTESTATION3_LEN,
+        }
+    }
+
+    pub fn approval_len(self) -> usize {
+        match self {
+            Layout::V2 => APPROVAL_LEN,
+            Layout::V3 => APPROVAL3_LEN,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Deploy {
+    pub program_data: Pubkey,
+    pub deployed_slot: u64,
+    pub config_version: u64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Attestation {
@@ -40,17 +100,21 @@ pub struct Attestation {
     pub entry_hash: [u8; 32],
     pub threshold: u8,
     pub approvals: u8,
+    pub deploy: Option<Deploy>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Registry {
     pub address: Pubkey,
+    pub layout: Layout,
+    pub seed_key: Pubkey,
     pub authority: Pubkey,
     pub pending_authority: Pubkey,
     pub count: u64,
     pub last_hash: [u8; 32],
     pub threshold: u8,
     pub active_reviewers: u16,
+    pub config_version: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -58,13 +122,17 @@ pub struct Reviewer {
     pub address: Pubkey,
     pub key: Pubkey,
     pub active: bool,
+    pub added_slot: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct Approval {
     pub address: Pubkey,
+    pub registry: Option<Pubkey>,
     pub attestation: Pubkey,
     pub reviewer: Pubkey,
+    pub slot: u64,
+    pub digest: Option<[u8; 32]>,
 }
 
 struct Reader<'a>(&'a [u8]);
@@ -87,24 +155,43 @@ fn body<'a>(data: &'a [u8], len: usize, disc: &[u8; 8]) -> Option<Reader<'a>> {
 }
 
 fn registry_from(address: Pubkey, data: &[u8]) -> Option<Registry> {
-    let mut r = body(data, REGISTRY_LEN, &REGISTRY_DISC)?;
+    let (mut r, layout) = match body(data, REGISTRY3_LEN, &REGISTRY3_DISC) {
+        Some(r) => (r, Layout::V3),
+        None => (body(data, REGISTRY_LEN, &REGISTRY_DISC)?, Layout::V2),
+    };
+    let seed_key = if layout == Layout::V3 {
+        Some(r.take())
+    } else {
+        None
+    };
     let authority = r.take();
     let pending_authority = r.take();
     let _name: [u8; 32] = r.take();
+    let count = r.u64();
+    let last_hash = r.take();
+    let threshold = r.u8();
+    let active_reviewers = u16::from_le_bytes(r.take());
+    let config_version = if layout == Layout::V3 { r.u64() } else { 0 };
     Some(Registry {
         address,
+        layout,
+        seed_key: seed_key.unwrap_or(authority),
         authority,
         pending_authority,
-        count: r.u64(),
-        last_hash: r.take(),
-        threshold: r.u8(),
-        active_reviewers: u16::from_le_bytes(r.take()),
+        count,
+        last_hash,
+        threshold,
+        active_reviewers,
+        config_version,
     })
 }
 
 fn attestation_from(address: Pubkey, data: &[u8]) -> Option<Attestation> {
-    let mut r = body(data, ATTESTATION_LEN, &ATTESTATION_DISC)?;
-    Some(Attestation {
+    let (mut r, v3) = match body(data, ATTESTATION3_LEN, &ATTESTATION3_DISC) {
+        Some(r) => (r, true),
+        None => (body(data, ATTESTATION_LEN, &ATTESTATION_DISC)?, false),
+    };
+    let mut a = Attestation {
         address,
         registry: r.take(),
         index: r.u64(),
@@ -121,7 +208,16 @@ fn attestation_from(address: Pubkey, data: &[u8]) -> Option<Attestation> {
         entry_hash: r.take(),
         threshold: r.u8(),
         approvals: r.u8(),
-    })
+        deploy: None,
+    };
+    if v3 {
+        a.deploy = Some(Deploy {
+            program_data: r.take(),
+            deployed_slot: r.u64(),
+            config_version: r.u64(),
+        });
+    }
+    Some(a)
 }
 
 fn reviewer_from(address: Pubkey, data: &[u8]) -> Option<(Pubkey, Reviewer)> {
@@ -129,31 +225,46 @@ fn reviewer_from(address: Pubkey, data: &[u8]) -> Option<(Pubkey, Reviewer)> {
     let registry = r.take();
     let key = r.take();
     let active = r.u8() == 1;
+    let added_slot = r.u64();
     Some((
         registry,
         Reviewer {
             address,
             key,
             active,
+            added_slot,
         },
     ))
 }
 
 fn approval_from(address: Pubkey, data: &[u8]) -> Option<Approval> {
+    if let Some(mut r) = body(data, APPROVAL3_LEN, &APPROVAL3_DISC) {
+        return Some(Approval {
+            address,
+            registry: Some(r.take()),
+            attestation: r.take(),
+            reviewer: r.take(),
+            slot: r.u64(),
+            digest: Some(r.take()),
+        });
+    }
     let mut r = body(data, APPROVAL_LEN, &APPROVAL_DISC)?;
     Some(Approval {
         address,
+        registry: None,
         attestation: r.take(),
         reviewer: r.take(),
+        slot: r.u64(),
+        digest: None,
     })
 }
 
 pub fn parse_registry(address: Pubkey, data: &[u8]) -> Result<Registry> {
-    registry_from(address, data).context("not a RegistryV2 account")
+    registry_from(address, data).context("not a RegistryV2 or RegistryV3 account")
 }
 
 pub fn parse_attestation(address: Pubkey, data: &[u8]) -> Result<Attestation> {
-    attestation_from(address, data).context("not an AttestationV2 account")
+    attestation_from(address, data).context("not an AttestationV2 or AttestationV3 account")
 }
 
 pub fn parse_reviewer(address: Pubkey, data: &[u8]) -> Result<(Pubkey, Reviewer)> {
@@ -178,6 +289,18 @@ pub fn entry_hash(a: &Attestation) -> [u8; 32] {
     h.update(a.reviewer);
     h.update(a.slot.to_le_bytes());
     h.update(a.prev_hash);
+    if let Some(d) = &a.deploy {
+        h.update(d.program_data);
+        h.update(d.deployed_slot.to_le_bytes());
+        h.update(d.config_version.to_le_bytes());
+    }
+    h.finalize().into()
+}
+
+pub fn approval_digest(entry_hash: &[u8; 32]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(APPROVAL_DOMAIN);
+    h.update(entry_hash);
     h.finalize().into()
 }
 
@@ -193,6 +316,7 @@ pub enum ChainError {
     UnknownReviewer { index: u64 },
     BadReviewerAccount,
     ApprovalMismatch { index: u64 },
+    MixedLayout { index: u64 },
     HeadMismatch,
 }
 
@@ -202,6 +326,7 @@ pub struct EntryStatus {
     pub approvals: u8,
     pub threshold: u8,
     pub final_: bool,
+    pub late_approvals: u8,
 }
 
 pub struct Snapshot {
@@ -213,7 +338,8 @@ pub struct Snapshot {
 
 pub fn verify(ledger: &Pubkey, s: &Snapshot) -> Result<Vec<EntryStatus>, ChainError> {
     let reg = &s.registry;
-    let expect = find_pda(&[b"registry2", &reg.authority], ledger)
+    let layout = reg.layout;
+    let expect = find_pda(&[layout.registry_seed(), &reg.seed_key], ledger)
         .map_err(|_| ChainError::WrongRegistryAddress)?
         .0;
     if expect != reg.address {
@@ -249,9 +375,19 @@ pub fn verify(ledger: &Pubkey, s: &Snapshot) -> Result<Vec<EntryStatus>, ChainEr
         if a.registry != reg.address {
             return Err(ChainError::ForeignEntry { index });
         }
-        let want = find_pda(&[b"attest2", &reg.address, &index.to_le_bytes()], ledger)
-            .map_err(|_| ChainError::WrongAddress { index })?
-            .0;
+        if a.deploy.is_some() != (layout == Layout::V3) {
+            return Err(ChainError::MixedLayout { index });
+        }
+        let want = find_pda(
+            &[
+                layout.attestation_seed(),
+                &reg.address,
+                &index.to_le_bytes(),
+            ],
+            ledger,
+        )
+        .map_err(|_| ChainError::WrongAddress { index })?
+        .0;
         if want != a.address {
             return Err(ChainError::WrongAddress { index });
         }
@@ -267,17 +403,26 @@ pub fn verify(ledger: &Pubkey, s: &Snapshot) -> Result<Vec<EntryStatus>, ChainEr
         if !s.reviewers.contains_key(&a.reviewer) {
             return Err(ChainError::UnknownReviewer { index });
         }
+        let digest = approval_digest(&a.entry_hash);
         let aps = by_att.get(&a.address).map(Vec::as_slice).unwrap_or(&[]);
         let mut signers: Vec<Pubkey> = Vec::new();
+        let mut late = 0u8;
         for ap in aps {
             let want = find_pda(&[b"approval", &a.address, &ap.reviewer], ledger)
                 .map_err(|_| ChainError::ApprovalMismatch { index })?
                 .0;
-            if want != ap.address
-                || !s.reviewers.contains_key(&ap.reviewer)
-                || signers.contains(&ap.reviewer)
-            {
+            let bound = match layout {
+                Layout::V2 => ap.digest.is_none(),
+                Layout::V3 => ap.digest == Some(digest) && ap.registry == Some(reg.address),
+            };
+            let Some(r) = s.reviewers.get(&ap.reviewer) else {
                 return Err(ChainError::ApprovalMismatch { index });
+            };
+            if want != ap.address || !bound || signers.contains(&ap.reviewer) {
+                return Err(ChainError::ApprovalMismatch { index });
+            }
+            if r.added_slot > a.slot {
+                late = late.saturating_add(1);
             }
             signers.push(ap.reviewer);
         }
@@ -289,6 +434,7 @@ pub fn verify(ledger: &Pubkey, s: &Snapshot) -> Result<Vec<EntryStatus>, ChainEr
             approvals: a.approvals,
             threshold: a.threshold,
             final_: a.approvals >= a.threshold,
+            late_approvals: late,
         });
         prev = a.entry_hash;
         last_slot = a.slot;
@@ -360,9 +506,18 @@ pub fn fetch_registry(rpc: &str, ledger: &str, registry: &str) -> Result<Registr
 #[cfg(feature = "net")]
 pub fn fetch(rpc: &str, ledger: &str, registry: &str) -> Result<Snapshot> {
     let reg = fetch_registry(rpc, ledger, registry)?;
-    let attestations = program_accounts(rpc, ledger, ATTESTATION_LEN, Some((DISC, registry)))?;
+    let layout = reg.layout;
+    let attestations = program_accounts(
+        rpc,
+        ledger,
+        layout.attestation_len(),
+        Some((DISC, registry)),
+    )?;
     let reviewers = program_accounts(rpc, ledger, REVIEWER_LEN, Some((DISC, registry)))?;
-    let approvals = program_accounts(rpc, ledger, APPROVAL_LEN, None)?;
+    let approvals = match layout {
+        Layout::V2 => program_accounts(rpc, ledger, APPROVAL_LEN, None)?,
+        Layout::V3 => program_accounts(rpc, ledger, APPROVAL3_LEN, Some((DISC, registry)))?,
+    };
     snapshot_from(reg, &attestations, &reviewers, &approvals)
 }
 
@@ -412,6 +567,9 @@ mod tests {
             ("Reviewer", REVIEWER_DISC),
             ("AttestationV2", ATTESTATION_DISC),
             ("Approval", APPROVAL_DISC),
+            ("RegistryV3", REGISTRY3_DISC),
+            ("AttestationV3", ATTESTATION3_DISC),
+            ("ApprovalV3", APPROVAL3_DISC),
         ] {
             let h = Sha256::digest(format!("account:{name}").as_bytes());
             assert_eq!(h[..8], d, "{name}");
@@ -421,16 +579,25 @@ mod tests {
     const LEDGER: Pubkey = [42u8; 32];
 
     fn chain(n: u64) -> Snapshot {
+        chain_in(n, Layout::V2)
+    }
+
+    fn chain_in(n: u64, layout: Layout) -> Snapshot {
         let authority = [9u8; 32];
         let reviewer = [6u8; 32];
-        let reg_addr = find_pda(&[b"registry2", &authority], &LEDGER).unwrap().0;
+        let reg_addr = find_pda(&[layout.registry_seed(), &authority], &LEDGER)
+            .unwrap()
+            .0;
         let mut prev = [0u8; 32];
         let mut atts = Vec::new();
         let mut approvals = Vec::new();
         for i in 0..n {
-            let address = find_pda(&[b"attest2", &reg_addr, &i.to_le_bytes()], &LEDGER)
-                .unwrap()
-                .0;
+            let address = find_pda(
+                &[layout.attestation_seed(), &reg_addr, &i.to_le_bytes()],
+                &LEDGER,
+            )
+            .unwrap()
+            .0;
             let mut a = Attestation {
                 address,
                 registry: reg_addr,
@@ -448,15 +615,24 @@ mod tests {
                 entry_hash: [0; 32],
                 threshold: 1,
                 approvals: 1,
+                deploy: (layout == Layout::V3).then_some(Deploy {
+                    program_data: [8; 32],
+                    deployed_slot: 90 + i,
+                    config_version: 1,
+                }),
             };
             a.entry_hash = entry_hash(&a);
+            let v3 = layout == Layout::V3;
             prev = a.entry_hash;
             approvals.push(Approval {
                 address: find_pda(&[b"approval", &address, &reviewer], &LEDGER)
                     .unwrap()
                     .0,
+                registry: v3.then_some(reg_addr),
                 attestation: address,
                 reviewer,
+                slot: 100 + i,
+                digest: v3.then(|| approval_digest(&a.entry_hash)),
             });
             atts.push(a);
         }
@@ -469,17 +645,21 @@ mod tests {
                     .0,
                 key: reviewer,
                 active: true,
+                added_slot: 1,
             },
         );
         Snapshot {
             registry: Registry {
                 address: reg_addr,
+                layout,
+                seed_key: authority,
                 authority,
                 pending_authority: [0; 32],
                 count: n,
                 last_hash: prev,
                 threshold: 1,
                 active_reviewers: 1,
+                config_version: 0,
             },
             attestations: atts,
             reviewers,
@@ -588,11 +768,82 @@ mod tests {
     }
 
     #[test]
+    fn v3_chain_verifies() {
+        let st = verify(&LEDGER, &chain_in(3, Layout::V3)).unwrap();
+        assert_eq!(st.len(), 3);
+        assert!(st.iter().all(|e| e.final_ && e.late_approvals == 0));
+    }
+
+    #[test]
+    fn v3_registry_survives_authority_rotation() {
+        let mut s = chain_in(2, Layout::V3);
+        s.registry.authority = [77; 32];
+        assert!(verify(&LEDGER, &s).is_ok());
+        let mut s = chain_in(2, Layout::V2);
+        s.registry.authority = [77; 32];
+        s.registry.seed_key = [77; 32];
+        assert_eq!(
+            verify(&LEDGER, &s).err(),
+            Some(ChainError::WrongRegistryAddress)
+        );
+    }
+
+    #[test]
+    fn v3_approval_with_another_digest_is_rejected() {
+        let mut s = chain_in(2, Layout::V3);
+        s.approvals[1].digest = Some([0; 32]);
+        assert_eq!(
+            verify(&LEDGER, &s).err(),
+            Some(ChainError::ApprovalMismatch { index: 1 })
+        );
+        let mut s = chain_in(2, Layout::V3);
+        s.approvals[0].registry = Some([1; 32]);
+        assert_eq!(
+            verify(&LEDGER, &s).err(),
+            Some(ChainError::ApprovalMismatch { index: 0 })
+        );
+    }
+
+    #[test]
+    fn v3_deploy_fields_are_bound_by_the_entry_hash() {
+        let mut s = chain_in(2, Layout::V3);
+        s.attestations[1].deploy.as_mut().unwrap().deployed_slot += 1;
+        assert_eq!(
+            verify(&LEDGER, &s).err(),
+            Some(ChainError::BadHash { index: 1 })
+        );
+        let mut s = chain_in(2, Layout::V3);
+        s.attestations[0].deploy = None;
+        assert_eq!(
+            verify(&LEDGER, &s).err(),
+            Some(ChainError::MixedLayout { index: 0 })
+        );
+    }
+
+    #[test]
+    fn approvals_by_reviewers_added_later_are_counted() {
+        let mut s = chain_in(2, Layout::V3);
+        for r in s.reviewers.values_mut() {
+            r.added_slot = 100;
+        }
+        let st = verify(&LEDGER, &s).unwrap();
+        assert_eq!((st[0].late_approvals, st[1].late_approvals), (0, 0));
+        for r in s.reviewers.values_mut() {
+            r.added_slot = 500;
+        }
+        let st = verify(&LEDGER, &s).unwrap();
+        assert_eq!((st[0].late_approvals, st[1].late_approvals), (1, 1));
+    }
+
+    #[test]
     fn layouts_match_the_program() {
         assert_eq!(REGISTRY_LEN, 8 + 140);
         assert_eq!(REVIEWER_LEN, 8 + 74);
         assert_eq!(ATTESTATION_LEN, 8 + 324);
         assert_eq!(APPROVAL_LEN, 8 + 73);
+        assert_eq!(REGISTRY3_LEN, 8 + 180);
+        assert_eq!(ATTESTATION3_LEN, 8 + 372);
+        assert_eq!(APPROVAL3_LEN, 8 + 137);
     }
 }
 
@@ -603,26 +854,30 @@ mod proofs {
     #[kani::proof]
     #[kani::unwind(9)]
     fn parse_registry_never_panics() {
-        let data: [u8; REGISTRY_LEN] = kani::any();
+        let data: [u8; REGISTRY3_LEN] = kani::any();
         let len: usize = kani::any();
-        kani::assume(len <= REGISTRY_LEN);
+        kani::assume(len <= REGISTRY3_LEN);
         let r = registry_from([0; 32], &data[..len]);
+        let disc = &data[..DISC];
         assert_eq!(
             r.is_some(),
-            len == REGISTRY_LEN && data[..DISC] == REGISTRY_DISC
+            (len >= REGISTRY3_LEN && disc == REGISTRY3_DISC)
+                || (len >= REGISTRY_LEN && disc == REGISTRY_DISC)
         );
     }
 
     #[kani::proof]
     #[kani::unwind(9)]
     fn parse_attestation_never_panics() {
-        let data: [u8; ATTESTATION_LEN] = kani::any();
+        let data: [u8; ATTESTATION3_LEN] = kani::any();
         let len: usize = kani::any();
-        kani::assume(len <= ATTESTATION_LEN);
+        kani::assume(len <= ATTESTATION3_LEN);
         let a = attestation_from([0; 32], &data[..len]);
+        let disc = &data[..DISC];
         assert_eq!(
             a.is_some(),
-            len == ATTESTATION_LEN && data[..DISC] == ATTESTATION_DISC
+            (len >= ATTESTATION3_LEN && disc == ATTESTATION3_DISC)
+                || (len >= ATTESTATION_LEN && disc == ATTESTATION_DISC)
         );
     }
 
@@ -638,9 +893,9 @@ mod proofs {
     #[kani::proof]
     #[kani::unwind(9)]
     fn parse_approval_never_panics() {
-        let data: [u8; APPROVAL_LEN] = kani::any();
+        let data: [u8; APPROVAL3_LEN] = kani::any();
         let len: usize = kani::any();
-        kani::assume(len <= APPROVAL_LEN);
+        kani::assume(len <= APPROVAL3_LEN);
         let _ = approval_from([0; 32], &data[..len]);
     }
 }
