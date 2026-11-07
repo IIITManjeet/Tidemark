@@ -69,7 +69,7 @@ pub struct Report {
     pub hunks: Vec<Hunk>,
 }
 
-pub const RULES_VERSION: &str = "tm-rules-0.2";
+pub const RULES_VERSION: &str = "tm-rules-0.3";
 
 const KNOWN: &[(&str, &str)] = &[
     ("11111111111111111111111111111111", "System Program"),
@@ -244,6 +244,216 @@ fn inline_keys(old: &Program, new: &Program, skip: &BTreeSet<u64>) -> Vec<[u8; 3
     keys
 }
 
+fn const_findings(old: &Program, new: &Program, findings: &mut Vec<Finding>) {
+    let set = |p: &Program| -> BTreeSet<u64> { p.flow.iter().filter_map(|f| f.constant).collect() };
+    let skip: BTreeSet<u64> = handler_discriminators(old)
+        .into_iter()
+        .chain(handler_discriminators(new))
+        .collect();
+    let (a, b) = (set(old), set(new));
+    let gone: Vec<u64> = a
+        .difference(&b)
+        .filter(|v| !skip.contains(v))
+        .copied()
+        .collect();
+    if gone.is_empty() {
+        return;
+    }
+    let added: Vec<u64> = b
+        .difference(&a)
+        .filter(|v| !skip.contains(v))
+        .copied()
+        .collect();
+    let mut detail: Vec<String> = gone
+        .iter()
+        .take(MAX_DETAIL)
+        .map(|v| format!("- {v:#x}"))
+        .collect();
+    detail.extend(added.iter().take(MAX_DETAIL).map(|v| format!("+ {v:#x}")));
+    findings.push(Finding {
+        id: "TM-CONST-CHANGE",
+        severity: Severity::Medium,
+        title: format!(
+            "{} 64-bit constant(s) no longer used, {} new",
+            gone.len(),
+            added.len()
+        ),
+        detail,
+    });
+}
+
+const SHAPE_WINDOW: usize = 64;
+
+fn shape(n: &str) -> &str {
+    n.split_whitespace().next().unwrap_or("")
+}
+
+fn same_shape(old: &Program, a: usize, new: &Program, b: usize) -> usize {
+    let mut k = 0;
+    while k < SHAPE_WINDOW {
+        let (Some(x), Some(y)) = (old.norm.get(a + k), new.norm.get(b + k)) else {
+            break;
+        };
+        if shape(x) != shape(y) {
+            break;
+        }
+        k += 1;
+        if matches!(shape(x), "ja" | "exit") {
+            break;
+        }
+    }
+    k
+}
+
+fn refine(old: &Program, new: &Program, map: &mut [Option<usize>], calls: bool) {
+    let mut votes: HashMap<usize, Option<usize>> = HashMap::new();
+    for (i, m) in map.iter().enumerate() {
+        let Some(j) = *m else { continue };
+        let (a, b) = (old.flow[i], new.flow[j]);
+        if a.is_call != calls || b.is_call != calls {
+            continue;
+        }
+        let (Some(ta), Some(tb)) = (a.target, b.target) else {
+            continue;
+        };
+        let (Some(to), Some(got)) = (line_of(&old.flow, ta), line_of(&new.flow, tb)) else {
+            continue;
+        };
+        votes
+            .entry(to)
+            .and_modify(|v| {
+                if *v != Some(got) {
+                    *v = None
+                }
+            })
+            .or_insert(Some(got));
+    }
+    for (to, got) in votes {
+        let Some(got) = got else { continue };
+        if map[to] == Some(got) {
+            continue;
+        }
+        let run = same_shape(old, to, new, got);
+        if run < 2 {
+            continue;
+        }
+        for k in 0..run {
+            map[to + k] = Some(got + k);
+        }
+    }
+}
+
+const ANCHOR: usize = 4;
+
+fn anchored(map: &[Option<usize>], to: usize, expected: usize) -> bool {
+    (1..=ANCHOR).all(|k| {
+        let before = to.checked_sub(k).map(|o| map[o] == expected.checked_sub(k));
+        let after = map.get(to + k).map(|m| *m == Some(expected + k));
+        before.unwrap_or(true) && after.unwrap_or(true)
+    })
+}
+
+fn line_of(flow: &[crate::elf::Flow], pc: usize) -> Option<usize> {
+    let i = flow.partition_point(|f| f.pc < pc);
+    (flow.get(i)?.pc == pc).then_some(i)
+}
+
+const MAX_DETAIL: usize = 12;
+
+fn retarget_findings(
+    old: &Program,
+    new: &Program,
+    td: &TextDiff<'_, '_, '_, str>,
+    findings: &mut Vec<Finding>,
+) {
+    if old.flow.len() != old.norm.len() || new.flow.len() != new.norm.len() {
+        return;
+    }
+    let mut map: Vec<Option<usize>> = vec![None; old.flow.len()];
+    for op in td.ops() {
+        if let similar::DiffOp::Equal {
+            old_index,
+            new_index,
+            len,
+        } = *op
+        {
+            for k in 0..len {
+                if let Some(m) = map.get_mut(old_index + k) {
+                    *m = Some(new_index + k);
+                }
+            }
+        }
+    }
+    refine(old, new, &mut map, false);
+    refine(old, new, &mut map, true);
+    let line = |p: &Program, i: usize| {
+        p.lines
+            .get(i)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    };
+    let (mut branches, mut calls) = (Vec::new(), Vec::new());
+    for (i, m) in map.iter().enumerate() {
+        let Some(j) = *m else { continue };
+        let (a, b) = (old.flow[i], new.flow[j]);
+        let (Some(ta), Some(tb)) = (a.target, b.target) else {
+            continue;
+        };
+        let Some(to) = line_of(&old.flow, ta) else {
+            continue;
+        };
+        let Some(expected) = map[to] else { continue };
+        if !anchored(&map, to, expected) || !anchored(&map, i, j) {
+            continue;
+        }
+        let Some(got) = line_of(&new.flow, tb) else {
+            continue;
+        };
+        if got != expected {
+            let d = format!(
+                "{}  now targets {:#x}, matching code moved to {:#x}",
+                line(new, j),
+                new.flow[got].pc,
+                new.flow[expected].pc
+            );
+            if a.is_call {
+                calls.push(d);
+            } else {
+                branches.push(d);
+            }
+        }
+    }
+    for (id, sev, title, mut d) in [
+        (
+            "TM-BRANCH-RETARGET",
+            Severity::High,
+            "Unchanged branches now jump somewhere else",
+            branches,
+        ),
+        (
+            "TM-CALL-RETARGET",
+            Severity::High,
+            "Unchanged calls now call a different function",
+            calls,
+        ),
+    ] {
+        if d.is_empty() {
+            continue;
+        }
+        let total = d.len();
+        d.truncate(MAX_DETAIL);
+        if total > MAX_DETAIL {
+            d.push(format!("… and {} more", total - MAX_DETAIL));
+        }
+        findings.push(Finding {
+            id,
+            severity: sev,
+            title: format!("{title} ({total})"),
+            detail: d,
+        });
+    }
+}
+
 fn is_known(k: &[u8; 32]) -> bool {
     let b58 = bs58::encode(k).into_string();
     KNOWN.iter().any(|(id, _)| *id == b58)
@@ -400,6 +610,8 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         .timeout(DIFF_DEADLINE)
         .diff_lines(&a, &b);
     let diff_exact = started.elapsed() < DIFF_DEADLINE;
+    retarget_findings(old, new, &td, &mut findings);
+    const_findings(old, new, &mut findings);
     let mut changed = 0usize;
     for c in td.iter_all_changes() {
         if c.tag() != ChangeTag::Equal {
