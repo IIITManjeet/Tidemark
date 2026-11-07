@@ -32,6 +32,8 @@ pub struct Program {
     pub rodata: Vec<u8>,
     pub security_txt: Option<String>,
     pub flow: Vec<Flow>,
+    pub dispatch: Vec<(u64, usize, usize)>,
+    pub error_codes: Vec<(usize, i64)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -132,9 +134,13 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     let mut flow = Vec::with_capacity(insns.len());
     let mut imm_counts: BTreeMap<i64, usize> = BTreeMap::new();
     let mut wide = Vec::new();
+    let mut error_codes = Vec::new();
     for i in &insns {
         if matches!(i.op, 0xb7 | 0xb4 | 0x62 | 0x6a | 0x72 | 0x7a) {
             *imm_counts.entry(i.imm).or_default() += 1;
+            if is_error_code(i.imm) {
+                error_codes.push((i.pc, i.imm));
+            }
         }
         if i.wide {
             wide.push(WideLoad {
@@ -183,8 +189,12 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     }
 
     let by_pc: HashMap<usize, usize> = insns.iter().enumerate().map(|(n, i)| (i.pc, n)).collect();
+    let mut dispatch = Vec::new();
     for w in wide.iter_mut() {
         let Some(&n) = by_pc.get(&w.pc) else { continue };
+        if let Some(t) = dispatch_target(&insns, n) {
+            dispatch.push((w.value, t, w.pc));
+        }
         if let Some(slot) = stored_to(&insns, n) {
             w.slot = Some(slot);
         } else if let Some(slot) = compared_with(&insns, n) {
@@ -227,6 +237,8 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         security_txt,
         sbpf_version: version,
         flow,
+        dispatch,
+        error_codes,
     })
 }
 
@@ -269,6 +281,27 @@ fn compared_with(insns: &[disasm::Insn], n: usize) -> Option<(u8, i16)> {
         }
     }
     None
+}
+
+pub fn is_error_code(v: i64) -> bool {
+    matches!(v, 2000..=3999 | 6000..=6999)
+}
+
+fn dispatch_target(insns: &[disasm::Insn], n: usize) -> Option<usize> {
+    let reg = insns[n].dst;
+    let k = (n + 1..insns.len().min(n + 4))
+        .find(|&k| insns[k].op == 0x1d && (insns[k].dst == reg || insns[k].src == reg))?;
+    let j = &insns[k];
+    let other = if j.dst == reg { j.src } else { j.dst };
+    let m = (k.saturating_sub(8)..k)
+        .rev()
+        .find(|&m| m != n && writes(&insns[m], other))?;
+    let l = &insns[m];
+    if l.op != 0x79 || l.off != 0 {
+        return None;
+    }
+    let t = j.pc as i64 + 1 + j.off as i64;
+    (t >= 0).then_some(t as usize)
 }
 
 fn extract_strings(data: &[u8], out: &mut BTreeSet<String>) {

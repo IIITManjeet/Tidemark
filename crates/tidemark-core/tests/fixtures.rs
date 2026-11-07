@@ -26,7 +26,13 @@ fn backdoored_upgrade_is_caught() {
         find("TM-KEY-ADD").detail,
         vec!["9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"]
     );
-    assert!(find("TM-CHECK-GONE").detail[0].starts_with("ConstraintHasOne"));
+    assert_eq!(
+        find("TM-CHECK-GONE").detail,
+        vec![
+            "withdraw: ConstraintHasOne (2001): 1 → 0 check sites",
+            "withdraw: AccountNotSigner (3010): 1 → 0 check sites",
+        ]
+    );
     assert_eq!(find("TM-IX-CHANGE").detail, vec!["+ sweep"]);
 }
 
@@ -47,5 +53,18 @@ fn unrelated_programs_have_no_false_key_hits_from_discriminators() {
     let keys = r.findings.iter().find(|f| f.id == "TM-KEY-ADD");
     if let Some(k) = keys {
         assert!(!k.detail.iter().any(|d| d.len() < 32));
+    }
+}
+
+#[test]
+fn dispatch_handlers_are_named() {
+    let p = load(&fixture("demo_vault_v1.so")).unwrap();
+    let names: Vec<String> = tidemark_core::handlers::handlers(&p)
+        .values()
+        .filter(|h| h.dispatched)
+        .filter_map(|h| h.name.clone())
+        .collect();
+    for n in ["deposit", "init_vault", "withdraw"] {
+        assert!(names.iter().any(|x| x == n), "{names:?}");
     }
 }
