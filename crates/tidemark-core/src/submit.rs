@@ -43,7 +43,7 @@ pub fn pubkey_of(k: &SigningKey) -> Pubkey {
     *k.verifying_key().as_bytes()
 }
 
-fn on_curve(b: &Pubkey) -> bool {
+pub fn on_curve(b: &Pubkey) -> bool {
     CompressedEdwardsY(*b).decompress().is_some()
 }
 
