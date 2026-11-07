@@ -350,6 +350,17 @@ with `--attest` call the same `attest_report` the `attest` command uses. RPC
 errors are logged and the loop continues; `--once` turns them into a failing
 exit code. The interval is at least 5 s.
 
-## 11. Planned interfaces
+## 11. Review cache (`cache.rs`)
+
+`tidemark diff --cache <dir>` stores `{report, verdict_hash, report_hash}` at
+`<dir>/<rules version>/<sha256 old>-<sha256 new>.json`. Both hashes are taken
+from the input bytes before loading, so a hit skips parsing and diffing. An
+entry is used only if its report names the same rules version and both
+hashes; anything else, including a corrupt file, is a miss and is recomputed.
+A new rules version uses a new folder, so a rules change never serves a stale
+verdict. The CLI prints from the report's JSON form, so cached and fresh
+reviews print identically.
+
+## 12. Planned interfaces
 
 - `POST /v1/review {old, new}` returns the report and its hash, backed by the cache.
