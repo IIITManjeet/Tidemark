@@ -11,7 +11,7 @@ name = "tidemark"
 path = "src/main.rs"
 
 [dependencies]
-tidemark-core.workspace = true
+tidemark-core = { workspace = true, features = ["net"] }
 anyhow.workspace = true
 clap.workspace = true
 ed25519-dalek.workspace = true

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tidemark</title>
+  <meta name="description" content="Review Solana program upgrades from bytecode, in your browser.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"></div>
+
+  <header class="top glass">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <path d="M3 20c4-6 8-6 13 0s9 6 13 0" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M3 13c4-6 8-6 13 0s9 6 13 0" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" opacity=".45"/>
+      </svg>
+      <span>Tidemark</span>
+    </div>
+    <nav role="tablist">
+      <button role="tab" class="tab" aria-selected="true" data-tab="review">Review</button>
+      <button role="tab" class="tab" aria-selected="false" data-tab="ledger">Ledger</button>
+    </nav>
+    <span class="rules mono" id="rules"></span>
+  </header>
+
+  <main>
+    <section id="review" class="panel" role="tabpanel">
+      <div class="hero">
+        <h1>What changed in this upgrade?</h1>
+        <p>Drop the deployed program and the new build. Tidemark reads the sBPF bytecode, diffs it and flags risky changes. Everything runs in your browser; no file leaves this page.</p>
+      </div>
+
+      <div class="drops">
+        <label class="drop glass" data-side="old">
+          <input type="file" accept=".so,application/octet-stream" hidden>
+          <span class="drop-k">Current</span>
+          <span class="drop-v">Drop old .so</span>
+          <span class="drop-meta mono"></span>
+        </label>
+        <div class="arrow" aria-hidden="true">→</div>
+        <label class="drop glass" data-side="new">
+          <input type="file" accept=".so,application/octet-stream" hidden>
+          <span class="drop-k">Upgrade</span>
+          <span class="drop-v">Drop new .so</span>
+          <span class="drop-meta mono"></span>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="run" disabled>Review upgrade</button>
+        <button class="btn ghost" id="demo">Load demo: backdoored vault</button>
+      </div>
+
+      <p class="error" id="review-error" role="alert" hidden></p>
+
+      <div id="result" hidden>
+        <div class="summary glass">
+          <div class="risk" id="risk"></div>
+          <dl class="stats">
+            <div><dt>Changed</dt><dd id="changed"></dd></div>
+            <div><dt>Old</dt><dd class="mono" id="old-sha"></dd></div>
+            <div><dt>New</dt><dd class="mono" id="new-sha"></dd></div>
+            <div><dt>Verdict hash</dt><dd class="mono" id="verdict"></dd></div>
+          </dl>
+        </div>
+        <h2>Findings</h2>
+        <ul class="findings" id="findings"></ul>
+        <h2>Code changes</h2>
+        <div class="hunks" id="hunks"></div>
+      </div>
+    </section>
+
+    <section id="ledger" class="panel" role="tabpanel" hidden>
+      <div class="hero">
+        <h1>Attestation ledger</h1>
+        <p>Reviews are written to a hash-linked ledger on Solana and co-signed by a quorum of reviewers. This page fetches the raw accounts over RPC and checks every link, address and signature count itself.</p>
+      </div>
+      <form class="ledger-form glass" id="ledger-form">
+        <label>RPC <input name="rpc" value="https://api.devnet.solana.com" spellcheck="false"></label>
+        <label>Ledger program <input name="ledger" class="mono" value="BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc" spellcheck="false"></label>
+        <label>Registry <input name="registry" class="mono" value="72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU" spellcheck="false"></label>
+        <button class="btn primary" type="submit">Fetch and verify</button>
+      </form>
+      <p class="error" id="ledger-error" role="alert" hidden></p>
+      <div id="ledger-result" hidden>
+        <div class="summary glass">
+          <div class="risk" id="chain"></div>
+          <dl class="stats">
+            <div><dt>Entries</dt><dd id="count"></dd></div>
+            <div><dt>Quorum</dt><dd id="quorum"></dd></div>
+            <div><dt>Authority</dt><dd class="mono" id="authority"></dd></div>
+            <div><dt>Head</dt><dd class="mono" id="head"></dd></div>
+          </dl>
+        </div>
+        <div class="table-wrap glass">
+          <table>
+            <thead><tr><th>#</th><th>Program</th><th>Risk</th><th>Approvals</th><th>Rules</th><th>Slot</th><th>Verdict</th></tr></thead>
+            <tbody id="entries"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a href="https://github.com/IIITManjeet/Tidemark">Source on GitHub</a>
+    <span>Heuristic review, not proof of safety.</span>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

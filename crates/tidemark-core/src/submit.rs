@@ -1,9 +1,12 @@
 use anyhow::{bail, Context, Result};
+#[cfg(feature = "net")]
 use base64::Engine;
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signer, SigningKey};
+#[cfg(feature = "net")]
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+#[cfg(feature = "net")]
 use std::time::{Duration, Instant};
 
 pub type Pubkey = [u8; 32];
@@ -204,10 +207,12 @@ pub fn sign(c: &Compiled, keys: &[&SigningKey]) -> Result<Vec<u8>> {
     Ok(tx)
 }
 
+#[cfg(feature = "net")]
 fn rpc(url: &str, method: &str, params: Value) -> Result<Value> {
     crate::rpc::call(url, method, params)
 }
 
+#[cfg(feature = "net")]
 fn confirm(url: &str, sig: &str) -> Result<()> {
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(60) {
@@ -229,12 +234,14 @@ fn confirm(url: &str, sig: &str) -> Result<()> {
     bail!("transaction {sig} was not confirmed within 60 s")
 }
 
+#[cfg(feature = "net")]
 pub struct Ctx<'a> {
     pub url: &'a str,
     pub ledger: Pubkey,
     pub payer: &'a SigningKey,
 }
 
+#[cfg(feature = "net")]
 impl Ctx<'_> {
     fn send(&self, signer: &SigningKey, metas: &[Meta], data: &[u8]) -> Result<String> {
         let bh = rpc(

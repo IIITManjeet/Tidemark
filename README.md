@@ -203,16 +203,31 @@ in a locked-down process: no network, read-only filesystem, a minimal syscall
 allowlist (seccomp-bpf, Landlock) and a distroless container image. Signing
 keys never share a process with untrusted input.
 
-### 14. Distribution: npm and VS Code · Roadmap
-- **npm package**: a WASM build of `tidemark-core` exposing
-  `diff(old: Uint8Array, new: Uint8Array) → Report`, usable in Node, browsers and CLIs (`npx tidemark`).
-- **VS Code extension**: diff a local build against the deployed program before
+### 14. Distribution: npm (Shipped) and VS Code (Roadmap)
+- **npm package** (`npm/`, Shipped): `tidemark-core` compiled to WebAssembly.
+  `review(old, new)` returns the same report and verdict hash as
+  `tidemark diff --json`, `inspect(bytes)` lists syscalls and handlers, and
+  `fetchLedger(rpc, ledger, registry)` pulls the ledger accounts over JSON-RPC
+  and verifies the whole chain in the browser. CI builds the package and checks
+  it against the CLI's demo report. Not published to the npm registry yet.
+- **VS Code extension** (Roadmap): diff a local build against the deployed program before
   you run `anchor deploy`, with findings shown inline.
 
-### 15. Web app · Roadmap
-A diff viewer, attestation feed and census in a dark-first interface: midnight
-black surfaces, electric blue for primary actions, and orange reserved for
-high-risk findings. Severity is always shown as a text label as well as colour.
+### 15. Web app · Shipped (diff viewer and ledger feed)
+`web/` is a static site on top of the npm package; nothing runs on a server.
+- **Review**: drop the current and the new `.so` (or load the demo vault).
+  The WASM engine produces the same findings, hunks and verdict hash as the CLI.
+  Files never leave the browser.
+- **Ledger**: enter an RPC endpoint, ledger program and registry. The page
+  pulls the raw accounts and verifies the hash chain, PDAs, reviewer allowlist
+  and quorum itself, then lists each attestation with its risk and approvals.
+- Dark, glass-panel interface: midnight black surfaces, electric blue for
+  actions, orange reserved for high-risk findings, and severity always written
+  out as text as well as colour.
+
+Build it with `bash scripts/build-web.sh` (writes `site/`) and serve that
+folder with any static server, e.g. `python -m http.server -d site`.
+The authority census view is still on the roadmap.
 
 The visual language is **liquid glass**: panels are translucent layers with
 backdrop blur, soft refraction at the edges and light that follows depth, so

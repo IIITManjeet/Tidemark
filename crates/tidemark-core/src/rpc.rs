@@ -1,7 +1,13 @@
-use anyhow::{bail, Context, Result};
+#[cfg(feature = "net")]
+use anyhow::Context;
+use anyhow::{bail, Result};
+#[cfg(feature = "net")]
 use base64::Engine;
+#[cfg(feature = "net")]
 use serde_json::{json, Value};
+#[cfg(feature = "net")]
 use std::io::Read;
+#[cfg(feature = "net")]
 use std::time::Duration;
 
 pub const UPGRADEABLE_LOADER: &str = "BPFLoaderUpgradeab1e11111111111111111111111";
@@ -16,6 +22,7 @@ pub struct Deployed {
 
 pub const MAX_RESPONSE_BYTES: u64 = 64 << 20;
 
+#[cfg(feature = "net")]
 pub fn call(url: &str, method: &str, params: Value) -> Result<Value> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(10))
@@ -38,6 +45,7 @@ pub fn call(url: &str, method: &str, params: Value) -> Result<Value> {
     Ok(v["result"].clone())
 }
 
+#[cfg(feature = "net")]
 fn account(rpc: &str, key: &str) -> Result<(Vec<u8>, String)> {
     let r = call(
         rpc,
@@ -97,6 +105,7 @@ pub fn parse_programdata(data: &[u8]) -> Result<ProgramData<'_>> {
     })
 }
 
+#[cfg(feature = "net")]
 pub fn fetch(rpc: &str, program_id: &str) -> Result<Deployed> {
     let (prog, owner) = account(rpc, program_id)?;
     if owner != UPGRADEABLE_LOADER {
