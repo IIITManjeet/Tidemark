@@ -165,17 +165,35 @@ demo upgrade, and the Kani proofs.
 45-byte ProgramData header, and reports the upgrade authority and last deploy
 slot. Immutable programs are identified as such.
 
-### 7. AI review agents · Roadmap
-A small set of agents layered on top of the deterministic engine:
-- **Explainer** turns findings into two plain-English sentences for signers and users.
-- **Triage** ranks ambiguous diffs and requests more context only when the rules can't decide.
-- **Verifier** writes a local LiteSVM test that reproduces a finding. Findings it can't reproduce are dropped.
+### 7. AI judge · Shipped (CLI)
+`tidemark diff old.so new.so --judge` adds an advisory AI review on top of the
+deterministic report. It is off by default and needs `GEMINI_KEY` in the
+environment (`GEMINI_MODEL` picks the model, default `gemini-2.5-flash`); with
+no key it says so and carries on.
+- **Explainer:** a short plain-English summary of what the upgrade changes,
+  referring to findings by id.
+- **Jury:** three fixed yes/no questions, each asked three times: can a single
+  key move funds, was an authority or ownership check removed, is there a new
+  path that withdraws funds or closes accounts. The vote count is printed per
+  question.
+- **Citations or it didn't happen:** every "yes" must cite a finding id or a
+  hunk that is really in the report. A "yes" that cites nothing real is dropped
+  and counted as dropped.
 
-Guardrails: agents hold no keys and can't sign. They return schema-checked JSON
-only. Program bytes and on-chain strings are treated as untrusted data, never
-as instructions, which defends against prompt and memory injection. The model
-id and prompt hash will be recorded in each attestation's `model_id` (zero
-today, since no model runs yet).
+Guardrails:
+- The jury can raise the risk (a cited majority "yes" lifts it to at least
+  High, which also drives the exit code) but never lowers it.
+- Nothing the jury says enters the verdict hash, the report hash or any
+  attestation. With `--json`, the judgement goes to a separate
+  `<name>.judge.json` and the report file is unchanged.
+- Program-derived strings (handler names, log strings, security.txt, code
+  lines) reach the model only inside one quoted JSON string marked as untrusted
+  data; answers are schema-checked JSON.
+- The judge sits behind a small `Backend` trait, so another yes/no model can be
+  added as one file.
+
+Still on the roadmap: a triage agent for ambiguous diffs, and a verifier that
+writes a LiteSVM test to reproduce a finding.
 
 ### 8. Cost-efficient inference cascade · Roadmap
 Expensive work runs only when it has to:
