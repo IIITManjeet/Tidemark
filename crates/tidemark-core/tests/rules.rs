@@ -501,3 +501,22 @@ fn key_limbs_spread_apart_are_still_assembled() {
     }
     assert_eq!(key_detail(&compare(&a, &b)).len(), 1);
 }
+
+#[test]
+fn decoy_dispatch_cluster_does_not_hide_a_removed_check() {
+    let a = two_handlers(&[(31, 2002)]);
+    let mut b = two_handlers(&[]);
+    for k in 0..6u64 {
+        b.dispatch.push((0xdec0 + k, 30, 100 + k as usize));
+    }
+    let r = compare(&a, &b);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-CHECK-GONE")
+        .expect("check finding");
+    assert_eq!(
+        f.detail,
+        vec!["outside any handler: ConstraintSigner (2002): 1 → 0 check sites"]
+    );
+}
