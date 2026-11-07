@@ -133,9 +133,10 @@ demo upgrade, and the Kani proofs.
 - **Kani model-checking harnesses**, run in CI on every pull request and push
   to `main`: each sBPF decoding step on any input up to 24 bytes, the ELF
   length computation on any input up to 160 bytes, the loader's store, compare
-  and dispatch scans over any 6 instructions, and the transaction length
-  encoding for every `u16`. Harnesses for the ledger account parsers exist but
-  do not finish within CI limits yet, so they are not claimed. Rendering, the
+  and dispatch scans over any 6 instructions, all four ledger account parsers
+  on any prefix of their account size (and they accept exactly the full-size
+  accounts with the right discriminator), and the transaction length encoding
+  for every `u16`. Rendering, the
   SBPF version check and the `.rodata` scan are checked by exhaustive or
   randomized tests instead, because string formatting and sets are too costly
   for the model checker. Full ELF parsing (goblin) and the rules are covered by

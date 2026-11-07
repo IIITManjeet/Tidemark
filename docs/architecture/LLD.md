@@ -274,8 +274,8 @@ compiles it.
 
 ## 7. Proofs
 
-The CI job `proofs` (Kani 0.68.0) runs the first four harnesses below; each
-verifies in under a minute on a 4 GB machine:
+The CI job `proofs` (Kani 0.68.0) runs every harness below; each verifies in
+under a minute on a 4 GB machine:
 
 | Harness | Property |
 |---|---|
@@ -283,10 +283,14 @@ verifies in under a minute on a 4 GB machine:
 | `elf::slot_scans_stay_in_bounds` | store, compare and dispatch scans never index out of bounds |
 | `rpc::elf_len_stays_in_bounds` | on any input up to 160 bytes, `elf_end` never panics and a returned length is within the data |
 | `submit::compact_u16_roundtrips` | length encoding round-trips for every `u16` |
-| `ledger::parse_*_never_panics` | account parsers on any prefix of their fixed size; **not in CI**, does not finish within 15 minutes because of `anyhow` error formatting |
+| `ledger::parse_*_never_panics` | the registry, attestation, reviewer and approval parsers never panic on any prefix of their account size; registry and attestation parse exactly when the data is full length and starts with the right discriminator |
 
 `elf_len` rejects section header entries that are not 64 bytes, which also
-keeps its loop bounded.
+keeps its loop bounded. The proved cores (`elf_end`, `registry_from`, …)
+return `Option` or static errors; the public functions wrap them in `anyhow`,
+because formatted errors and hashing are far too costly for CBMC. Account
+discriminators are pinned as constants and a unit test checks each against
+`sha256("account:<Name>")[..8]`.
 
 Some properties are tested rather than proved, because string formatting and
 `BTreeSet` make CBMC run out of memory or time: `render` on every opcode with extreme
