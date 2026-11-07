@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const R_BPF_64_32: u32 = 10;
+const R_BPF_64_RELATIVE: u32 = 8;
+const R_BPF_64_64: u32 = 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct WideLoad {
@@ -28,6 +30,19 @@ pub struct Program {
     pub wide: Vec<WideLoad>,
     pub rodata: Vec<u8>,
     pub security_txt: Option<String>,
+    pub flow: Vec<Flow>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Flow {
+    pub pc: usize,
+    pub target: Option<usize>,
+    pub is_call: bool,
+    pub constant: Option<u64>,
+}
+
+fn is_address(v: u64, image_end: u64) -> bool {
+    v < image_end || matches!(v >> 32, 1..=4)
 }
 
 const EM_BPF: u16 = 247;
@@ -80,7 +95,17 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     let insns = disasm::decode(text);
 
     let mut reloc_names: HashMap<usize, String> = HashMap::new();
+    let image_end = elf
+        .section_headers
+        .iter()
+        .map(|s| s.sh_addr.saturating_add(s.sh_size))
+        .max()
+        .unwrap_or(0);
+    let mut relocated: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for r in elf.dynrels.iter() {
+        if matches!(r.r_type, R_BPF_64_RELATIVE | R_BPF_64_64) && r.r_offset >= text_hdr.sh_addr {
+            relocated.insert(((r.r_offset - text_hdr.sh_addr) / 8) as usize);
+        }
         if r.r_type != R_BPF_64_32 {
             continue;
         }
@@ -103,6 +128,7 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     let mut norm = Vec::with_capacity(insns.len());
     let mut syscalls_used: BTreeMap<String, usize> = BTreeMap::new();
     let mut callx = 0;
+    let mut flow = Vec::with_capacity(insns.len());
     let mut imm_counts: BTreeMap<i64, usize> = BTreeMap::new();
     let mut wide = Vec::new();
     for i in &insns {
@@ -129,7 +155,27 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         if i.op == 0x8d {
             callx += 1;
         }
-        let (r, n) = disasm::render(i, sc.as_deref());
+        let rel = |d: i64| {
+            let t = i.pc as i64 + 1 + d;
+            (t >= 0).then_some(t as usize)
+        };
+        let mut f = Flow {
+            pc: i.pc,
+            ..Flow::default()
+        };
+        if i.op & 7 == 5 && !matches!(i.op, 0x85 | 0x8d | 0x95) {
+            f.target = rel(i.off as i64);
+        } else if i.op == 0x85 && i.src == 1 && sc.is_none() {
+            f.target = rel(i.imm);
+            f.is_call = true;
+        } else if i.wide && !relocated.contains(&i.pc) && !is_address(i.imm as u64, image_end) {
+            f.constant = Some(i.imm as u64);
+        }
+        let (r, mut n) = disasm::render(i, sc.as_deref());
+        if let Some(c) = f.constant {
+            n = format!("lddw r{}, {c:#x}", i.dst);
+        }
+        flow.push(f);
         lines.push(format!("{:6x}  {r}", i.pc));
         norm.push(n);
     }
@@ -182,6 +228,7 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         rodata,
         security_txt,
         sbpf_version: version,
+        flow,
     })
 }
 

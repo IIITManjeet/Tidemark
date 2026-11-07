@@ -19,6 +19,7 @@ fn program(norm: Vec<String>) -> Program {
         wide: Vec::new(),
         rodata: Vec::new(),
         security_txt: None,
+        flow: Vec::new(),
     }
 }
 
