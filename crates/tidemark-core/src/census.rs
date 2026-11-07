@@ -5,6 +5,11 @@ pub const SQUADS_V4: &str = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf";
 pub const SQUADS_V3: &str = "SMPLecH534NA9acpos4G6x7uf3LWbCAwZQE9e8ZekMu";
 pub const SPL_GOVERNANCE: &str = "GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw";
 const SYSTEM: &str = "11111111111111111111111111111111";
+const LEGACY_LOADERS: [&str; 3] = [
+    "BPFLoader1111111111111111111111111111111111",
+    "BPFLoader2111111111111111111111111111111111",
+    "NativeLoader1111111111111111111111111111111",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -36,13 +41,13 @@ pub fn classify(authority: Option<&str>, authority_owner: Option<&str>) -> anyho
     let Some(a) = authority else {
         return Ok(Control::Immutable);
     };
+    if on_curve(&decode_pubkey(a)?) {
+        return Ok(Control::SingleKey);
+    }
     match authority_owner {
         Some(o @ (SQUADS_V4 | SQUADS_V3)) => return Ok(Control::Multisig { program: o.into() }),
         Some(SPL_GOVERNANCE) => return Ok(Control::Governance),
         _ => {}
-    }
-    if on_curve(&decode_pubkey(a)?) {
-        return Ok(Control::SingleKey);
     }
     Ok(Control::ProgramControlled {
         owner: authority_owner.filter(|o| *o != SYSTEM).map(String::from),
@@ -81,8 +86,11 @@ pub fn survey(rpc: &str, program: &str) -> Entry {
     };
     let run = |e: &mut Entry| -> anyhow::Result<()> {
         let owner = owner_of(rpc, program)?.ok_or_else(|| anyhow::anyhow!("account not found"))?;
-        if owner != crate::rpc::UPGRADEABLE_LOADER {
+        if LEGACY_LOADERS.contains(&owner.as_str()) {
             return Ok(());
+        }
+        if owner != crate::rpc::UPGRADEABLE_LOADER {
+            anyhow::bail!("owned by {owner}, not a loader this census reads");
         }
         let d = crate::rpc::fetch(rpc, program)?;
         e.last_deploy_slot = Some(d.last_deploy_slot);
@@ -126,6 +134,18 @@ mod tests {
         assert_eq!(
             classify(Some(PDA), Some(SYSTEM)).unwrap(),
             Control::ProgramControlled { owner: None }
+        );
+    }
+
+    #[test]
+    fn wallet_assigned_to_a_multisig_program_is_still_a_single_key() {
+        assert_eq!(
+            classify(Some(WALLET), Some(SQUADS_V4)).unwrap(),
+            Control::SingleKey
+        );
+        assert_eq!(
+            classify(Some(WALLET), Some(SPL_GOVERNANCE)).unwrap(),
+            Control::SingleKey
         );
     }
 
