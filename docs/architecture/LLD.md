@@ -272,7 +272,26 @@ The Anchor workspace pins `rust-version = 1.79` and a lockfile resolved for it
 (`blake3 1.5.5`, `zerocopy 0.8.25`) so `cargo build-sbf` from Solana CLI 2.1
 compiles it.
 
-## 7. Planned interfaces
+## 7. Proofs
+
+`cargo kani -p tidemark-core` checks these harnesses (CI job `proofs`, Kani
+0.68.0):
+
+| Harness | Property |
+|---|---|
+| `disasm::decode_is_total_and_in_bounds` | any ≤32-byte input decodes without panic; every instruction lies inside the input |
+| `disasm::render_is_total` | rendering never panics |
+| `elf::version_check_is_total` | `sbpf_version` accepts only EM_BPF/EM_SBPF and returns ≤ 3 |
+| `elf::slot_scans_stay_in_bounds` | store, compare and dispatch scans never index out of bounds |
+| `elf::rodata_window_matches_naive_scan` | the sliding window agrees with a direct count on every window of a 34-byte input |
+| `rpc::elf_len_stays_in_bounds` | on any 192-byte header, a returned length is within the data |
+| `ledger::parse_*_never_panics` | account parsers on any prefix of their fixed size |
+| `submit::compact_u16_roundtrips` | length encoding round-trips for every `u16` |
+
+`elf_len` rejects section header entries that are not 64 bytes, which also
+keeps its loop bounded.
+
+## 8. Planned interfaces
 
 - `tidemark-wasm`: `diff(old: Uint8Array, new: Uint8Array) -> ReportJson`, used
   by the npm package and VS Code extension. RPC fetch stays on the host side.
