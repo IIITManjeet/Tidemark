@@ -266,9 +266,11 @@ package.
   consistent but stale or fake chain, so the page says which view it trusted.
   Add a second RPC and it shows VERIFIED only if both agree on the head and
   every entry hash.
-- Restrained dark interface: near-black panels with fine rules, a serif for
-  headings, blue for actions and orange reserved for high-risk findings.
-  Severity is always written out as text as well as colour.
+- Landing page and tools in one responsive page: navy surfaces, royal-blue
+  accents, Outfit type and hand-drawn SVG illustrations. Colours, radii, glow
+  and breakpoints are Tailwind theme tokens in `web/app/globals.css`.
+  Severity is always written out as text as well as colour, and motion stops
+  under `prefers-reduced-motion`.
 
 Build it with `bash scripts/build-web.sh` (writes `web/out/`) and serve that
 folder with any static server, e.g. `python -m http.server -d web/out`. Set

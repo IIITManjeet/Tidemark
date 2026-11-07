@@ -16,7 +16,7 @@ export function Drop({ kind, hint, file, onFile }: { kind: string; hint: string;
 
   return (
     <label
-      className={`panel flex min-h-28 cursor-pointer flex-col gap-1 px-5.5 py-5 transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent motion-reduce:transition-none ${
+      className={`rounded-2xl border bg-bg/60 flex min-h-28 cursor-pointer flex-col gap-1 px-5.5 py-5 transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent motion-reduce:transition-none ${
         over ? "border-accent bg-panel-2" : file ? "border-line-2" : "border-dashed border-line-2 hover:border-accent hover:bg-panel-2"
       }`}
       onDragOver={(e) => {

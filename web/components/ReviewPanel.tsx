@@ -13,7 +13,7 @@ function HunkView({ hunk, open }: { hunk: Hunk; open: boolean }) {
   const added = hunk.lines.filter((l) => l.startsWith("+")).length;
   const removed = hunk.lines.filter((l) => l.startsWith("-")).length;
   return (
-    <details open={open} className="panel group overflow-hidden">
+    <details open={open} className="rounded-2xl border border-line bg-bg/60 group overflow-hidden">
       <summary className="cursor-pointer list-none border-line bg-panel-2 px-4 py-2.5 font-mono text-[12.5px] text-muted group-open:border-b [&::-webkit-details-marker]:hidden">
         <span className="text-faint group-open:hidden">{"▸ "}</span>
         <span className="hidden text-faint group-open:inline">{"▾ "}</span>
@@ -58,7 +58,7 @@ function Result({ r }: { r: Review }) {
       </Summary>
 
       <SectionTitle>Findings</SectionTitle>
-      <ul className="panel m-0 list-none divide-y divide-line overflow-hidden p-0">
+      <ul className="rounded-2xl border border-line bg-bg/60 m-0 list-none divide-y divide-line overflow-hidden p-0">
         {rep.findings.length === 0 && <li className="px-5 py-4">No findings. Nothing obvious changed.</li>}
         {rep.findings.map((f, i) => (
           <li

@@ -32,7 +32,7 @@ export function Headline({ label, value, tone, note }: { label: string; value: s
   return (
     <div className="flex min-w-36 flex-col items-start gap-0.5 md:border-r md:border-line md:pr-7">
       <small className="label-caps">{label}</small>
-      <b className={`font-serif text-3xl font-semibold tracking-wide ${HEADLINE[tone]}`}>{value}</b>
+      <b className={`text-3xl font-semibold tracking-wide ${HEADLINE[tone]}`}>{value}</b>
       {note && <small className="max-w-56 text-xs text-muted">{note}</small>}
     </div>
   );
@@ -51,7 +51,7 @@ export function Stat({ label, children, title }: { label: string; children: Reac
 
 export function Summary({ head, children }: { head: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="panel mt-6 flex flex-wrap items-center gap-7 px-6 py-5">
+    <div className="mt-6 flex flex-wrap items-center gap-7 rounded-2xl border border-line bg-bg/60 px-5 py-5 sm:px-6">
       {head}
       <dl className="m-0 grid flex-1 grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-x-7 gap-y-3.5">{children}</dl>
     </div>
@@ -60,9 +60,9 @@ export function Summary({ head, children }: { head: React.ReactNode; children: R
 
 export function Hero({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="mb-7 border-b border-line pb-7">
-      <h1 className="mb-2.5 font-serif text-[clamp(28px,4vw,40px)] leading-tight font-semibold tracking-tight">{title}</h1>
-      <p className="m-0 max-w-[660px] text-muted">{children}</p>
+    <div className="mb-6">
+      <h2 className="mb-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h2>
+      <p className="m-0 max-w-[680px] text-muted">{children}</p>
     </div>
   );
 }
@@ -70,7 +70,7 @@ export function Hero({ title, children }: { title: string; children: React.React
 export function ErrorNote({ message }: { message: string }) {
   if (!message) return null;
   return (
-    <p role="alert" className="rounded-lg border border-red/35 bg-red/10 px-3.5 py-2.5 text-[#f2b8b5]">
+    <p role="alert" className="mt-3 rounded-xl border border-red/35 bg-red/10 px-3.5 py-2.5 text-[#f2b8b5]">
       {message}
     </p>
   );
@@ -82,7 +82,7 @@ export function SectionTitle({ children }: { children: React.ReactNode }) {
 
 const BTN = {
   primary: "border-accent bg-accent text-white hover:border-accent-2 hover:bg-accent-2",
-  ghost: "border-line-2 bg-panel text-text hover:border-faint hover:bg-panel-2",
+  ghost: "border-transparent bg-panel-2 text-text hover:bg-line",
 };
 
 export function Button({
@@ -92,7 +92,7 @@ export function Button({
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof BTN }) {
   return (
     <button
-      className={`cursor-pointer rounded-lg border px-4.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${BTN[variant]} ${className}`}
+      className={`cursor-pointer rounded-xl border px-5 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${BTN[variant]} ${className}`}
       {...props}
     />
   );

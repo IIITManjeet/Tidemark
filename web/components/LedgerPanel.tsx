@@ -49,7 +49,7 @@ function Result({ v, rpcs }: { v: Ledger; rpcs: number }) {
           <span className="font-mono text-[13px]">{short(v.registry.head)}</span>
         </Stat>
       </Summary>
-      <div className="panel mt-4 overflow-x-auto">
+      <div className="rounded-2xl border border-line bg-bg/60 mt-4 overflow-x-auto">
         <table className="w-full border-collapse text-[13.5px]">
           <thead>
             <tr>
@@ -129,7 +129,7 @@ export function LedgerPanel() {
         Reviews are written to a hash-linked ledger on Solana and co-signed by a quorum of reviewers. This page fetches the
         raw accounts over RPC and checks every link, address and signature count itself.
       </Hero>
-      <form onSubmit={submit} className="panel mb-1 grid items-end gap-3.5 px-5 py-4.5 md:grid-cols-2">
+      <form onSubmit={submit} className="rounded-2xl border border-line bg-bg/60 mb-1 grid items-end gap-3.5 px-5 py-4.5 md:grid-cols-2">
         <Field name="rpc" label="RPC" />
         <Field name="rpc2" label="Cross-check RPC" placeholder="optional second endpoint" />
         <Field name="ledger" label="Ledger program" />
