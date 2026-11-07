@@ -126,15 +126,21 @@ be frozen).
 (`high` by default), so a pipeline can block risky upgrades automatically. Use
 `--fail-on medium` to also stop on a new instruction handler or indirect call.
 An unknown level is a usage error (exit `1`), never a silent pass. This repo's own
-CI runs clippy with warnings as errors, the test suite, and a live review of the
-demo upgrade.
+CI runs clippy with warnings as errors, the test suite, a live review of the
+demo upgrade, and the Kani proofs.
 
 ### 5. Typed, proof-checked Rust · Shipped
-- **Kani model-checking harnesses** for the lowest-level parsers: the sBPF
-  decoder on any input up to 32 bytes, instruction rendering, the ledger account
-  parsers up to their fixed sizes, and the transaction length encoding for every
-  `u16`. They run locally with `cargo kani`; they are not in CI yet, and they do
-  not cover the ELF loader or the rules.
+- **Kani model-checking harnesses**, run in CI on every pull request and push
+  to `main`: each sBPF decoding step on any input up to 24 bytes, the ELF
+  length computation on any input up to 160 bytes, the loader's store, compare
+  and dispatch scans over any 6 instructions, all four ledger account parsers
+  on any prefix of their account size (and they accept exactly the full-size
+  accounts with the right discriminator), and the transaction length encoding
+  for every `u16`. Rendering, the
+  SBPF version check and the `.rodata` scan are checked by exhaustive or
+  randomized tests instead, because string formatting and sets are too costly
+  for the model checker. Full ELF parsing (goblin) and the rules are covered by
+  tests, not proofs.
 - **Fuzz-style regression tests** for the inputs reviewers used to stall or crash
   the tool: oversized log names, tens of thousands of stack constants, very
   large unrelated programs, and malformed hashes in a report.

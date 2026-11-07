@@ -272,7 +272,32 @@ The Anchor workspace pins `rust-version = 1.79` and a lockfile resolved for it
 (`blake3 1.5.5`, `zerocopy 0.8.25`) so `cargo build-sbf` from Solana CLI 2.1
 compiles it.
 
-## 7. Planned interfaces
+## 7. Proofs
+
+The CI job `proofs` (Kani 0.68.0) runs every harness below; each verifies in
+under a minute on a 4 GB machine:
+
+| Harness | Property |
+|---|---|
+| `disasm::decode_step_stays_in_bounds` | one decoding step on any ≤24-byte input at any offset never panics, advances 8 or 16 bytes and stays inside the input; `decode` loops only while a step succeeds, so the whole buffer follows |
+| `elf::slot_scans_stay_in_bounds` | store, compare and dispatch scans never index out of bounds |
+| `rpc::elf_len_stays_in_bounds` | on any input up to 160 bytes, `elf_end` never panics and a returned length is within the data |
+| `submit::compact_u16_roundtrips` | length encoding round-trips for every `u16` |
+| `ledger::parse_*_never_panics` | the registry, attestation, reviewer and approval parsers never panic on any prefix of their account size; registry and attestation parse exactly when the data is full length and starts with the right discriminator |
+
+`elf_len` rejects section header entries that are not 64 bytes, which also
+keeps its loop bounded. The proved cores (`elf_end`, `registry_from`, …)
+return `Option` or static errors; the public functions wrap them in `anyhow`,
+because formatted errors and hashing are far too costly for CBMC. Account
+discriminators are pinned as constants and a unit test checks each against
+`sha256("account:<Name>")[..8]`.
+
+Some properties are tested rather than proved, because string formatting and
+`BTreeSet` make CBMC run out of memory or time: `render` on every opcode with extreme
+operands, `sbpf_version` on the version table, and the `.rodata` sliding
+window against a naive count on 2,000 random inputs.
+
+## 8. Planned interfaces
 
 - `tidemark-wasm`: `diff(old: Uint8Array, new: Uint8Array) -> ReportJson`, used
   by the npm package and VS Code extension. RPC fetch stays on the host side.
