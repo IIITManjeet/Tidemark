@@ -65,28 +65,84 @@ Instruction word: `op:u8 | dst:u4 src:u4 | off:i16 | imm:i32`. `lddw`
 masks jump targets, internal call targets and `lddw` addresses so code that
 only moved compares equal. Syscall names and ALU immediates are kept.
 
-### 2.3 Rules (`diff.rs`, `tm-rules-0.2`)
+The loader then puts real 64-bit constants back into the normalized line. An
+`lddw` counts as an address if a `R_BPF_64_RELATIVE` or `R_BPF_64_64`
+relocation points at it, if it falls below the end of the loaded image, or if
+its upper half is a VM region (1 to 4). Everything else is a constant and is
+compared as-is. Alongside each line the loader keeps a `Flow` record: the
+absolute branch or internal-call target and the constant, if any.
+
+### 2.3 Rules (`diff.rs`, `tm-rules-0.3`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
 | TM-KEY-ADD | new unknown 32-byte keys (see below) | High |
 | TM-PROG-REF | new keys matching well-known program ids | Low |
-| TM-CHECK-GONE | fewer immediates for Anchor check error codes (2001 has_one, 2002 signer, 2003 raw, 2004 owner, 2006 seeds, 2012 address, 3007 wrong owner program, 3010 not signer) | High |
-| TM-IX-CHANGE | handler set changed; names taken from `Instruction: X` log text and kept only if `sha256("global:x")[..8]` appears as an `lddw` immediate | Medium if added, else Low |
+| TM-CHECK-GONE | a handler reaches fewer immediates for Anchor check error codes (2001 has_one, 2002 signer, 2003 raw, 2004 owner, 2006 seeds, 2012 address, 3007 wrong owner program, 3010 not signer); program-wide counts if either side has no dispatch table | High |
+| TM-ERR-GONE | a handler reaches fewer custom error immediates (6000–6999) | Medium |
+| TM-IX-CHANGE | handler set (by discriminator) changed; unnamed handlers show as their discriminator | Medium if added, else Low |
 | TM-SYSCALL-ADD | call-site count of a syscall rose | High for `invoke_signed*`, Low for other sensitive syscalls, else Info |
 | TM-SYSCALL-DEL | call-site count fell | Info |
 | TM-CALLX-ADD | more `callx` sites | Medium |
+| TM-BRANCH-RETARGET | an aligned branch whose target no longer maps to the old target (see below) | High |
+| TM-CALL-RETARGET | same, for internal calls | High |
+| TM-CONST-CHANGE | constants present in old and missing in new, excluding handler discriminators | Medium |
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
 
 **Key recovery.** Compiled Rust rarely keeps a `Pubkey` constant as 32
-contiguous bytes. It loads it as four 64-bit `lddw` immediates and stores
-each with `stxdw` to `[base + o]`, `[base + o+8]`, `[base + o+16]`,
-`[base + o+24]`. The loader records, for every `lddw`, the first `stxdw` of
-that register within the next 8 instructions. A key is reported when four new,
-high-entropy immediates (6+ distinct bytes, upper half above 0x10, not a
-handler discriminator) land in consecutive slots of one base register within
-64 instructions. 32-byte windows in `.rodata` are still checked as well.
+contiguous bytes. It loads it as four 64-bit `lddw` immediates and either
+stores each with `stxdw` to `[base + o]` … `[base + o+24]`, or compares each
+with `jeq`/`jne` against a value loaded by `ldxdw` from such a slot. For every
+`lddw` the loader looks up to 32 instructions ahead, stopping if the register
+is overwritten (any LD, LDX or ALU write, or a call for r0–r5), and records
+the store slot, or failing that the slot of the compared value. Store and
+compare slots are kept apart.
+
+Keys are assembled per program: four non-zero immediates (not handler
+discriminators) in consecutive slots of one base register within 64
+instructions, accepted if the 32 bytes hold 20+ distinct values. The rule
+then reports keys assembled in the new program that were neither assembled in
+the old one nor present in its `.rodata`. Comparing whole keys rather than
+limbs means limbs planted ahead of time in an older version don't hide a key,
+and a single low-entropy limb doesn't either.
+
+`.rodata` is scanned with a sliding 32-byte window at every offset (24+
+distinct bytes, under 28 printable). Overlapping new windows are joined, so a
+longer random blob shows up once as `<first window> (start of an N-byte
+blob)`; at most 4096 new windows are examined.
+
+**Handlers (`handlers.rs`).** Anchor dispatches with
+`ldxdw rA, [rB+0]; lddw rC, disc; jeq rA, rC, stub`. The loader records every
+such compare (the `ldxdw` must be within 8 instructions and read offset 0).
+The dispatch table is the largest run of these whose `lddw`s are at most 8
+instructions apart, capped at 256 entries. Names come from `Instruction: X`
+log strings: each prefix of the CamelCase words is tried as snake_case, both
+as-is and with digits split off (`Sweep1` → `sweep1`, `sweep_1`), and kept if
+`sha256("global:name")[..8]` is a known discriminator. A build without logs
+still lists every handler, just by discriminator.
+
+**Per-handler checks.** Functions start at every internal call target and
+after every `exit`. From a handler's stub (up to 32 instructions, stopping at
+`ja`/`exit`) the walk follows internal calls and sums the error-code
+immediates (2000–3999, 6000–6999) of every function reached. Old and new
+handlers with the same discriminator are compared code by code, so a decoy
+check added to another handler no longer cancels a removed one. A decoy added
+inside code the same handler reaches still can. The walk has a total budget
+of 4M steps; past it the rule falls back to program-wide counts.
+
+**Retargets.** Normalization hides targets, so a branch moved by one
+instruction diffs as unchanged. The rule maps old lines to new lines through
+the `Equal` runs of the line diff, then checks every aligned branch and call:
+the old target, mapped forward, must be the new target. The line diff can pair
+look-alike blocks wrongly (Anchor handler stubs differ only in stack offsets),
+so the map is refined first. Aligned branches vote on where each old target
+went; when every vote agrees and the two blocks have the same opcode sequence
+up to the next `ja`/`exit` (at least two instructions), that block is remapped.
+Calls then vote the same way. A mismatch is reported only if both the
+instruction and the old target sit inside runs aligned for 4 lines either
+side, which drops pairings inside rewritten code. Moving a branch onto a block
+with an identical opcode sequence is not caught.
 
 Overall risk is the highest finding severity. Code hunks come from a line diff
 of normalized disassembly with three lines of context, shown in readable form.
@@ -207,7 +263,8 @@ to 60 s and fails on any `err`.
 - v2 (`--features v2`): `withdraw` accepts an unchecked authority, and a new
   `sweep` instruction moves the treasury to a hardcoded key via `invoke_signed`.
 - Actual findings (`fixtures/demo_report.json`): TM-KEY-ADD with the exact
-  sweep address, TM-CHECK-GONE for `ConstraintHasOne` 5 → 4, TM-IX-CHANGE `+ sweep`.
+  sweep address, TM-CHECK-GONE for `withdraw` (`ConstraintHasOne` 1 → 0,
+  `AccountNotSigner` 1 → 0), TM-IX-CHANGE `+ sweep`.
 
 ## 6. Toolchain notes
 
@@ -215,7 +272,32 @@ The Anchor workspace pins `rust-version = 1.79` and a lockfile resolved for it
 (`blake3 1.5.5`, `zerocopy 0.8.25`) so `cargo build-sbf` from Solana CLI 2.1
 compiles it.
 
-## 7. Planned interfaces
+## 7. Proofs
+
+The CI job `proofs` (Kani 0.68.0) runs every harness below; each verifies in
+under a minute on a 4 GB machine:
+
+| Harness | Property |
+|---|---|
+| `disasm::decode_step_stays_in_bounds` | one decoding step on any ≤24-byte input at any offset never panics, advances 8 or 16 bytes and stays inside the input; `decode` loops only while a step succeeds, so the whole buffer follows |
+| `elf::slot_scans_stay_in_bounds` | store, compare and dispatch scans never index out of bounds |
+| `rpc::elf_len_stays_in_bounds` | on any input up to 160 bytes, `elf_end` never panics and a returned length is within the data |
+| `submit::compact_u16_roundtrips` | length encoding round-trips for every `u16` |
+| `ledger::parse_*_never_panics` | the registry, attestation, reviewer and approval parsers never panic on any prefix of their account size; registry and attestation parse exactly when the data is full length and starts with the right discriminator |
+
+`elf_len` rejects section header entries that are not 64 bytes, which also
+keeps its loop bounded. The proved cores (`elf_end`, `registry_from`, …)
+return `Option` or static errors; the public functions wrap them in `anyhow`,
+because formatted errors and hashing are far too costly for CBMC. Account
+discriminators are pinned as constants and a unit test checks each against
+`sha256("account:<Name>")[..8]`.
+
+Some properties are tested rather than proved, because string formatting and
+`BTreeSet` make CBMC run out of memory or time: `render` on every opcode with extreme
+operands, `sbpf_version` on the version table, and the `.rodata` sliding
+window against a naive count on 2,000 random inputs.
+
+## 8. Planned interfaces
 
 - `tidemark-wasm`: `diff(old: Uint8Array, new: Uint8Array) -> ReportJson`, used
   by the npm package and VS Code extension. RPC fetch stays on the host side.

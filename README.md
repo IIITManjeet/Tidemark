@@ -14,23 +14,24 @@ is, and writes every review to a public, hash-linked ledger on Solana.
 
 ```
 $ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
-Tidemark upgrade review  (tm-rules-0.2)
+Tidemark upgrade review  (tm-rules-0.3)
   old  99e7c4fe98f886be  20066 insns
   new  519015fa4879499f  20608 insns
-  changed instructions: 986 (2.42%)
+  changed instructions: 996 (2.45%)
   overall risk: HIGH
 
 [HIGH    ] TM-KEY-ADD  1 new hardcoded key(s)
              9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin
 [HIGH    ] TM-CHECK-GONE  Account checks were removed
-             ConstraintHasOne (2001): 5 → 4 check sites
+             withdraw: ConstraintHasOne (2001): 1 → 0 check sites
+             withdraw: AccountNotSigner (3010): 1 → 0 check sites
 [MEDIUM  ] TM-IX-CHANGE  Instruction handlers added or removed
              + sweep
 ```
 
 That is a real run against the demo vault and its backdoored upgrade, built
 from `contracts/programs/demo-vault`. Tidemark recovers the attacker's address
-byte for byte, spots the dropped `has_one` check and names the new `sweep`
+byte for byte, spots that `withdraw` lost its `has_one` and signer checks and names the new `sweep`
 handler, all from bytecode alone.
 
 ---
@@ -59,15 +60,19 @@ refused with a clear message instead of being mis-read.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
 
 ### 2. Upgrade risk rules · Shipped
-Deterministic, versioned rules (`tm-rules-0.2`) turn a diff into ranked findings:
+Deterministic, versioned rules (`tm-rules-0.3`) turn a diff into ranked findings:
 
 | Rule | What it catches |
 |---|---|
-| `TM-KEY-ADD` | New 32-byte keys, recovered from `.rodata` or rebuilt from four `lddw` immediates stored to consecutive stack slots |
-| `TM-CHECK-GONE` | Fewer Anchor account-check sites (`has_one`, signer, owner, seeds, address), counted by their error-code immediates |
-| `TM-IX-CHANGE` | Instruction handlers added or removed, each name confirmed by matching `sha256("global:<name>")[..8]` in the code |
+| `TM-KEY-ADD` | New 32-byte keys, found anywhere in `.rodata` or rebuilt from four `lddw` immediates that are stored to, or compared against, consecutive 8-byte slots |
+| `TM-CHECK-GONE` | An instruction handler lost Anchor account-check sites (`has_one`, signer, owner, seeds, address), counted by error-code immediates in the code each handler can reach |
+| `TM-ERR-GONE` | An instruction handler lost custom error checks (`require!`, error codes 6000+) |
+| `TM-IX-CHANGE` | Instruction handlers added or removed, read from the Anchor dispatch table; names confirmed by matching `sha256("global:<name>")[..8]` |
 | `TM-SYSCALL-ADD` | New `invoke_signed` and other sensitive syscall call sites |
 | `TM-CALLX-ADD` | New indirect calls with runtime-computed targets |
+| `TM-BRANCH-RETARGET` | A branch that looks unchanged now jumps to different code |
+| `TM-CALL-RETARGET` | A call that looks unchanged now calls a different function |
+| `TM-CONST-CHANGE` | 64-bit constants (not addresses, not handler discriminators) that are no longer used |
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
 
@@ -76,8 +81,8 @@ named, so a new reference to Token isn't mistaken for a planted key.
 
 These rules are heuristics over compiled code, tuned on Anchor programs. They
 catch the demo backdoor exactly, but a determined attacker can shape code to
-avoid them (for example comparing against a key instead of storing it, or
-reusing an existing CPI call site). Treat a clean report as "nothing obvious
+avoid them (for example splitting a key across functions, or reusing an
+existing CPI call site). Treat a clean report as "nothing obvious
 changed", not as proof of safety. Known gaps are tracked as GitHub issues.
 
 ### 3. Quorum-signed attestation ledger · Shipped (live on devnet)
@@ -121,15 +126,21 @@ be frozen).
 (`high` by default), so a pipeline can block risky upgrades automatically. Use
 `--fail-on medium` to also stop on a new instruction handler or indirect call.
 An unknown level is a usage error (exit `1`), never a silent pass. This repo's own
-CI runs clippy with warnings as errors, the test suite, and a live review of the
-demo upgrade.
+CI runs clippy with warnings as errors, the test suite, a live review of the
+demo upgrade, and the Kani proofs.
 
 ### 5. Typed, proof-checked Rust · Shipped
-- **Kani model-checking harnesses** for the lowest-level parsers: the sBPF
-  decoder on any input up to 32 bytes, instruction rendering, the ledger account
-  parsers up to their fixed sizes, and the transaction length encoding for every
-  `u16`. They run locally with `cargo kani`; they are not in CI yet, and they do
-  not cover the ELF loader or the rules.
+- **Kani model-checking harnesses**, run in CI on every pull request and push
+  to `main`: each sBPF decoding step on any input up to 24 bytes, the ELF
+  length computation on any input up to 160 bytes, the loader's store, compare
+  and dispatch scans over any 6 instructions, all four ledger account parsers
+  on any prefix of their account size (and they accept exactly the full-size
+  accounts with the right discriminator), and the transaction length encoding
+  for every `u16`. Rendering, the
+  SBPF version check and the `.rodata` scan are checked by exhaustive or
+  randomized tests instead, because string formatting and sets are too costly
+  for the model checker. Full ELF parsing (goblin) and the rules are covered by
+  tests, not proofs.
 - **Fuzz-style regression tests** for the inputs reviewers used to stall or crash
   the tool: oversized log names, tens of thousands of stack constants, very
   large unrelated programs, and malformed hashes in a report.

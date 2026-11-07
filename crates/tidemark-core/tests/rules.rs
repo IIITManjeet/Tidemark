@@ -23,6 +23,9 @@ fn program(norm: &[&str]) -> Program {
         wide: Vec::new(),
         rodata: Vec::new(),
         security_txt: None,
+        flow: Vec::new(),
+        dispatch: Vec::new(),
+        error_codes: Vec::new(),
     }
 }
 
@@ -99,6 +102,7 @@ fn with_handlers(p: &mut Program, names: &[(&str, &str)]) {
             pc: p.wide.len() * 2,
             value: disc(snake),
             slot: None,
+            cmp: false,
         });
     }
 }
@@ -156,6 +160,7 @@ fn key_built_on_stack_is_recovered() {
             pc: 10 + j * 3,
             value: u64::from_le_bytes(key[j * 8..j * 8 + 8].try_into().unwrap()),
             slot: Some((10, -64 + 8 * j as i16)),
+            cmp: false,
         });
     }
     let r = compare(&a, &b);
@@ -179,6 +184,7 @@ fn scattered_constants_are_not_a_key() {
             pc: 10 + j as usize * 3,
             value: 0x9a8b_7c6d_5e4f_3021 ^ (j << 40),
             slot: Some((10, -64 + 16 * j as i16)),
+            cmp: false,
         });
     }
     let r = compare(&a, &b);
@@ -215,4 +221,170 @@ fn report_hash_is_stable() {
     let h2 = tidemark_core::report_hash(&compare(&a, &b));
     assert_eq!(h1, h2);
     assert_eq!(h1.len(), 64);
+}
+
+fn limbs(key: &[u8; 32]) -> Vec<u64> {
+    key.chunks(8)
+        .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+        .collect()
+}
+
+fn push_key(p: &mut Program, key: &[u8; 32], pc: usize, base: u8, cmp: bool) {
+    for (j, v) in limbs(key).into_iter().enumerate() {
+        p.wide.push(WideLoad {
+            pc: pc + j * 3,
+            value: v,
+            slot: Some((base, 8 * j as i16)),
+            cmp,
+        });
+    }
+}
+
+fn sweep_key() -> [u8; 32] {
+    bs58::decode("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
+        .into_vec()
+        .unwrap()
+        .try_into()
+        .unwrap()
+}
+
+fn key_detail(r: &tidemark_core::diff::Report) -> Vec<String> {
+    r.findings
+        .iter()
+        .find(|f| f.id == "TM-KEY-ADD")
+        .map(|f| f.detail.clone())
+        .unwrap_or_default()
+}
+
+#[test]
+fn key_used_in_comparison_is_recovered() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    push_key(&mut b, &sweep_key(), 10, 2, true);
+    assert_eq!(
+        key_detail(&compare(&a, &b)),
+        vec!["9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"]
+    );
+}
+
+#[test]
+fn low_entropy_limb_does_not_hide_a_key() {
+    let mut key = sweep_key();
+    key[24..].copy_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1]);
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    push_key(&mut b, &key, 10, 10, false);
+    assert_eq!(key_detail(&compare(&a, &b)).len(), 1);
+}
+
+#[test]
+fn limbs_planted_earlier_still_count() {
+    let key = sweep_key();
+    let mut a = program(&["exit"]);
+    for (j, v) in limbs(&key).into_iter().enumerate() {
+        a.wide.push(WideLoad {
+            pc: 10 + j * 200,
+            value: v,
+            slot: None,
+            cmp: false,
+        });
+    }
+    let mut b = program(&["exit"]);
+    b.wide = a.wide.clone();
+    push_key(&mut b, &key, 2000, 10, false);
+    assert_eq!(key_detail(&compare(&a, &b)).len(), 1);
+}
+
+#[test]
+fn key_already_present_is_not_new() {
+    let mut a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    push_key(&mut a, &sweep_key(), 10, 10, false);
+    push_key(&mut b, &sweep_key(), 90, 10, true);
+    assert!(key_detail(&compare(&a, &b)).is_empty());
+}
+
+#[test]
+fn rodata_blob_is_reported_once() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    let blob: Vec<u8> = (0..40u8).map(|i| i.wrapping_mul(71) ^ 0x3c).collect();
+    for i in 0..=8 {
+        b.consts32.insert(blob[i..i + 32].try_into().unwrap());
+    }
+    let d = key_detail(&compare(&a, &b));
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert!(d[0].ends_with("(start of a 40-byte blob)"), "{d:?}");
+}
+
+fn two_handlers(codes: &[(usize, i64)]) -> Program {
+    let mut norm = vec!["mov64 r0, 0"; 40];
+    for k in [11, 21] {
+        norm[k] = "ja <l>";
+    }
+    for k in [34, 39] {
+        norm[k] = "exit";
+    }
+    let mut p = program(&norm);
+    p.flow = (0..40)
+        .map(|pc| tidemark_core::elf::Flow {
+            pc,
+            ..Default::default()
+        })
+        .collect();
+    for (at, to) in [(10, 30), (20, 35)] {
+        p.flow[at].target = Some(to);
+        p.flow[at].is_call = true;
+    }
+    p.dispatch = vec![(0xaaaa, 10, 0), (0xbbbb, 20, 3)];
+    p.error_codes = codes.to_vec();
+    for (_, c) in codes {
+        *p.imm_counts.entry(*c).or_default() += 1;
+    }
+    p
+}
+
+#[test]
+fn decoy_check_in_another_handler_does_not_hide_removal() {
+    let a = two_handlers(&[(31, 2001)]);
+    let b = two_handlers(&[(36, 2001)]);
+    let r = compare(&a, &b);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-CHECK-GONE")
+        .expect("check finding");
+    assert_eq!(
+        f.detail,
+        vec!["0x000000000000aaaa: ConstraintHasOne (2001): 1 → 0 check sites"]
+    );
+}
+
+#[test]
+fn removed_custom_error_is_reported() {
+    let a = two_handlers(&[(32, 6001)]);
+    let b = two_handlers(&[]);
+    let r = compare(&a, &b);
+    assert!(ids(&r).contains(&"TM-ERR-GONE"));
+    assert!(!ids(&r).contains(&"TM-CHECK-GONE"));
+}
+
+#[test]
+fn handler_without_log_is_found_from_dispatch() {
+    let a = two_handlers(&[]);
+    let mut b = two_handlers(&[]);
+    b.dispatch.push((0xcccc, 20, 6));
+    let r = compare(&a, &b);
+    let f = r.findings.iter().find(|f| f.id == "TM-IX-CHANGE").unwrap();
+    assert_eq!(f.detail, vec!["+ 0x000000000000cccc"]);
+}
+
+#[test]
+fn handler_name_with_digits_is_matched() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    with_handlers(&mut b, &[("Sweep1", "sweep_1")]);
+    let r = compare(&a, &b);
+    let f = r.findings.iter().find(|f| f.id == "TM-IX-CHANGE").unwrap();
+    assert_eq!(f.detail, vec!["+ sweep_1"]);
 }

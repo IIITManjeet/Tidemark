@@ -1,10 +1,10 @@
 use crate::elf::{Program, WideLoad};
+use crate::handlers::{self, Handler};
 use crate::syscalls;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use similar::{Algorithm, ChangeTag, TextDiff};
-use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -69,7 +69,7 @@ pub struct Report {
     pub hunks: Vec<Hunk>,
 }
 
-pub const RULES_VERSION: &str = "tm-rules-0.2";
+pub const RULES_VERSION: &str = "tm-rules-0.3";
 
 const KNOWN: &[(&str, &str)] = &[
     ("11111111111111111111111111111111", "System Program"),
@@ -117,136 +117,397 @@ const ANCHOR_CHECKS: &[(i64, &str)] = &[
 ];
 
 const DIFF_DEADLINE: Duration = Duration::from_secs(10);
-const MAX_NAME_LEN: usize = 64;
-const MAX_NAME_WORDS: usize = 8;
 const KEY_PC_WINDOW: usize = 64;
 
-fn discriminator(name: &str) -> u64 {
-    let h = Sha256::digest(format!("global:{name}").as_bytes());
-    u64::from_le_bytes(h[..8].try_into().expect("8 bytes"))
-}
-
-fn camel_words(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    for (i, c) in s.char_indices().skip(1) {
-        if c.is_ascii_uppercase() {
-            out.push(&s[start..i]);
-            start = i;
-        }
+fn check_name(code: i64) -> String {
+    match ANCHOR_CHECKS.iter().find(|(c, _)| *c == code) {
+        Some((_, n)) => format!("{n} ({code})"),
+        None if code >= 6000 => format!("custom error {code}"),
+        None => format!("error {code}"),
     }
-    out.push(&s[start..]);
-    out
 }
 
-fn handler_names(p: &Program) -> Vec<(String, u64)> {
-    let wide: BTreeSet<u64> = p.wide.iter().map(|w| w.value).collect();
-    let needle = b"Instruction: ";
-    let mut out = Vec::new();
-    let mut i = 0;
-    while let Some(pos) = p.rodata[i..]
-        .windows(needle.len())
-        .position(|w| w == needle)
-    {
-        let at = i + pos + needle.len();
-        let run: String = p.rodata[at..]
-            .iter()
-            .take_while(|b| b.is_ascii_alphanumeric())
-            .take(MAX_NAME_LEN)
-            .map(|b| *b as char)
-            .collect();
-        let mut words = camel_words(&run);
-        words.truncate(MAX_NAME_WORDS);
-        for k in (1..=words.len()).rev() {
-            let name = words[..k]
-                .iter()
-                .map(|w| w.to_ascii_lowercase())
-                .collect::<Vec<_>>()
-                .join("_");
-            let d = discriminator(&name);
-            if wide.contains(&d) {
-                out.push((name, d));
-                break;
+fn check_findings(
+    old: &Program,
+    new: &Program,
+    oh: &BTreeMap<u64, Handler>,
+    nh: &BTreeMap<u64, Handler>,
+    findings: &mut Vec<Finding>,
+) {
+    let (mut anchor, mut custom) = (Vec::new(), Vec::new());
+    let per_handler = oh.values().any(|h| h.dispatched) && nh.values().any(|h| h.dispatched);
+    if per_handler {
+        for (d, a) in oh.iter().filter(|(_, h)| h.dispatched) {
+            let Some(b) = nh.get(d).filter(|h| h.dispatched) else {
+                continue;
+            };
+            for (code, &o) in &a.checks {
+                let n = b.checks.get(code).copied().unwrap_or(0);
+                if n >= o {
+                    continue;
+                }
+                let line = format!(
+                    "{}: {}: {o} → {n} check sites",
+                    b.label(*d),
+                    check_name(*code)
+                );
+                if *code >= 6000 {
+                    custom.push(line);
+                } else if ANCHOR_CHECKS.iter().any(|(c, _)| c == code) {
+                    anchor.push(line);
+                }
             }
         }
-        i = at;
+    } else {
+        for (code, name) in ANCHOR_CHECKS {
+            let o = old.imm_counts.get(code).copied().unwrap_or(0);
+            let n = new.imm_counts.get(code).copied().unwrap_or(0);
+            if n < o {
+                anchor.push(format!("{name} ({code}): {o} → {n} check sites"));
+            }
+        }
     }
-    out
+    for (id, sev, title, detail) in [
+        (
+            "TM-CHECK-GONE",
+            Severity::High,
+            "Account checks were removed",
+            anchor,
+        ),
+        (
+            "TM-ERR-GONE",
+            Severity::Medium,
+            "Custom error checks were removed",
+            custom,
+        ),
+    ] {
+        if !detail.is_empty() {
+            findings.push(Finding {
+                id,
+                severity: sev,
+                title: title.into(),
+                detail,
+            });
+        }
+    }
 }
 
-fn anchor_handlers(p: &Program) -> BTreeSet<String> {
-    handler_names(p).into_iter().map(|(n, _)| n).collect()
+const KEY_DISTINCT: usize = 20;
+
+fn key_like(k: &[u8; 32]) -> bool {
+    k.iter().collect::<BTreeSet<_>>().len() >= KEY_DISTINCT
 }
 
-fn handler_discriminators(p: &Program) -> Vec<u64> {
-    handler_names(p).into_iter().map(|(_, d)| d).collect()
-}
-
-fn high_entropy(v: u64) -> bool {
-    let distinct = v.to_le_bytes().iter().collect::<BTreeSet<_>>().len();
-    distinct >= 6 && (v >> 32) > 0x10
-}
-
-fn inline_keys(old: &Program, new: &Program, skip: &BTreeSet<u64>) -> Vec<[u8; 32]> {
-    let seen: BTreeSet<u64> = old.wide.iter().map(|w| w.value).collect();
-    let fresh: Vec<&WideLoad> = new
+fn assembled_keys(p: &Program, skip: &BTreeSet<u64>) -> BTreeSet<[u8; 32]> {
+    let cands: Vec<&WideLoad> = p
         .wide
         .iter()
-        .filter(|w| {
-            w.slot.is_some()
-                && high_entropy(w.value)
-                && !seen.contains(&w.value)
-                && !skip.contains(&w.value)
-        })
+        .filter(|w| w.slot.is_some() && w.value != 0 && !skip.contains(&w.value))
         .collect();
-    let mut by_slot: HashMap<(u8, i16), Vec<usize>> = HashMap::new();
-    for (i, w) in fresh.iter().enumerate() {
-        by_slot
-            .entry(w.slot.expect("filtered"))
-            .or_default()
-            .push(i);
+    let slot = |w: &WideLoad| {
+        let (base, off) = w.slot.expect("filtered");
+        (w.cmp, base, off)
+    };
+    let mut by_slot: HashMap<(bool, u8, i16), Vec<usize>> = HashMap::new();
+    for (i, w) in cands.iter().enumerate() {
+        by_slot.entry(slot(w)).or_default().push(i);
     }
-    let mut used = vec![false; fresh.len()];
-    let mut keys = Vec::new();
-    for (a, w) in fresh.iter().enumerate() {
+    let mut used = vec![false; cands.len()];
+    let mut keys = BTreeSet::new();
+    for (a, w) in cands.iter().enumerate() {
         if used[a] {
             continue;
         }
-        let (base, off) = w.slot.expect("filtered");
+        let (cmp, base, off) = slot(w);
         let mut parts = vec![a];
         for step in 1..4i16 {
             let Some(want_off) = off.checked_add(8 * step) else {
                 break;
             };
-            let Some(cands) = by_slot.get(&(base, want_off)) else {
+            let Some(list) = by_slot.get(&(cmp, base, want_off)) else {
                 break;
             };
             let lo = w.pc.saturating_sub(KEY_PC_WINDOW);
-            let first = cands.partition_point(|&i| fresh[i].pc < lo);
-            let hit = cands[first..]
+            let first = list.partition_point(|&i| cands[i].pc < lo);
+            let hit = list[first..]
                 .iter()
-                .take_while(|&&i| fresh[i].pc <= w.pc + KEY_PC_WINDOW)
+                .take_while(|&&i| cands[i].pc <= w.pc + KEY_PC_WINDOW)
                 .find(|&&i| !used[i] && i != a);
             match hit {
                 Some(&b) => parts.push(b),
                 None => break,
             }
         }
-        if parts.len() == 4 {
-            let mut k = [0u8; 32];
-            for (j, idx) in parts.iter().enumerate() {
-                used[*idx] = true;
-                k[j * 8..j * 8 + 8].copy_from_slice(&fresh[*idx].value.to_le_bytes());
+        if parts.len() < 4 {
+            continue;
+        }
+        let mut k = [0u8; 32];
+        for (j, idx) in parts.iter().enumerate() {
+            k[j * 8..j * 8 + 8].copy_from_slice(&cands[*idx].value.to_le_bytes());
+        }
+        if key_like(&k) {
+            for idx in parts {
+                used[idx] = true;
             }
-            keys.push(k);
+            keys.insert(k);
         }
     }
     keys
 }
 
+const MAX_BLOB_WINDOWS: usize = 4096;
+
+fn rodata_keys(windows: Vec<[u8; 32]>) -> (Vec<String>, usize) {
+    let windows: Vec<[u8; 32]> = windows.into_iter().take(MAX_BLOB_WINDOWS).collect();
+    let by_prefix: HashMap<&[u8], usize> = windows
+        .iter()
+        .enumerate()
+        .map(|(i, w)| (&w[..31], i))
+        .collect();
+    let suffixes: std::collections::HashSet<&[u8]> = windows.iter().map(|w| &w[1..]).collect();
+    let mut out = Vec::new();
+    let mut total = 0;
+    for w in &windows {
+        if suffixes.contains(&w[..31]) {
+            continue;
+        }
+        total += 1;
+        if out.len() >= MAX_DETAIL {
+            continue;
+        }
+        let mut len = 32;
+        let mut cur = w;
+        while let Some(&n) = by_prefix.get(&cur[1..]) {
+            if len >= 32 + windows.len() {
+                break;
+            }
+            cur = &windows[n];
+            len += 1;
+        }
+        if len == 32 {
+            out.push(name_key(w));
+        } else {
+            out.push(format!("{} (start of a {len}-byte blob)", name_key(w)));
+        }
+    }
+    (out, total)
+}
+
+fn const_findings(old: &Program, new: &Program, skip: &BTreeSet<u64>, findings: &mut Vec<Finding>) {
+    let set = |p: &Program| -> BTreeSet<u64> { p.flow.iter().filter_map(|f| f.constant).collect() };
+    let (a, b) = (set(old), set(new));
+    let gone: Vec<u64> = a
+        .difference(&b)
+        .filter(|v| !skip.contains(v))
+        .copied()
+        .collect();
+    if gone.is_empty() {
+        return;
+    }
+    let added: Vec<u64> = b
+        .difference(&a)
+        .filter(|v| !skip.contains(v))
+        .copied()
+        .collect();
+    let mut detail: Vec<String> = gone
+        .iter()
+        .take(MAX_DETAIL)
+        .map(|v| format!("- {v:#x}"))
+        .collect();
+    detail.extend(added.iter().take(MAX_DETAIL).map(|v| format!("+ {v:#x}")));
+    findings.push(Finding {
+        id: "TM-CONST-CHANGE",
+        severity: Severity::Medium,
+        title: format!(
+            "{} 64-bit constant(s) no longer used, {} new",
+            gone.len(),
+            added.len()
+        ),
+        detail,
+    });
+}
+
+const SHAPE_WINDOW: usize = 64;
+
+fn shape(n: &str) -> &str {
+    n.split_whitespace().next().unwrap_or("")
+}
+
+fn same_shape(old: &Program, a: usize, new: &Program, b: usize) -> usize {
+    let mut k = 0;
+    while k < SHAPE_WINDOW {
+        let (Some(x), Some(y)) = (old.norm.get(a + k), new.norm.get(b + k)) else {
+            break;
+        };
+        if shape(x) != shape(y) {
+            break;
+        }
+        k += 1;
+        if matches!(shape(x), "ja" | "exit") {
+            break;
+        }
+    }
+    k
+}
+
+fn refine(old: &Program, new: &Program, map: &mut [Option<usize>], calls: bool) {
+    let mut votes: HashMap<usize, Option<usize>> = HashMap::new();
+    for (i, m) in map.iter().enumerate() {
+        let Some(j) = *m else { continue };
+        let (a, b) = (old.flow[i], new.flow[j]);
+        if a.is_call != calls || b.is_call != calls {
+            continue;
+        }
+        let (Some(ta), Some(tb)) = (a.target, b.target) else {
+            continue;
+        };
+        let (Some(to), Some(got)) = (line_of(&old.flow, ta), line_of(&new.flow, tb)) else {
+            continue;
+        };
+        votes
+            .entry(to)
+            .and_modify(|v| {
+                if *v != Some(got) {
+                    *v = None
+                }
+            })
+            .or_insert(Some(got));
+    }
+    for (to, got) in votes {
+        let Some(got) = got else { continue };
+        if map[to] == Some(got) {
+            continue;
+        }
+        let run = same_shape(old, to, new, got);
+        if run < 2 {
+            continue;
+        }
+        for k in 0..run {
+            map[to + k] = Some(got + k);
+        }
+    }
+}
+
+const ANCHOR: usize = 4;
+
+fn anchored(map: &[Option<usize>], to: usize, expected: usize) -> bool {
+    (1..=ANCHOR).all(|k| {
+        let before = to.checked_sub(k).map(|o| map[o] == expected.checked_sub(k));
+        let after = map.get(to + k).map(|m| *m == Some(expected + k));
+        before.unwrap_or(true) && after.unwrap_or(true)
+    })
+}
+
+fn line_of(flow: &[crate::elf::Flow], pc: usize) -> Option<usize> {
+    let i = flow.partition_point(|f| f.pc < pc);
+    (flow.get(i)?.pc == pc).then_some(i)
+}
+
+const MAX_DETAIL: usize = 12;
+
+fn retarget_findings(
+    old: &Program,
+    new: &Program,
+    td: &TextDiff<'_, '_, '_, str>,
+    findings: &mut Vec<Finding>,
+) {
+    if old.flow.len() != old.norm.len() || new.flow.len() != new.norm.len() {
+        return;
+    }
+    let mut map: Vec<Option<usize>> = vec![None; old.flow.len()];
+    for op in td.ops() {
+        if let similar::DiffOp::Equal {
+            old_index,
+            new_index,
+            len,
+        } = *op
+        {
+            for k in 0..len {
+                if let Some(m) = map.get_mut(old_index + k) {
+                    *m = Some(new_index + k);
+                }
+            }
+        }
+    }
+    refine(old, new, &mut map, false);
+    refine(old, new, &mut map, true);
+    let line = |p: &Program, i: usize| {
+        p.lines
+            .get(i)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    };
+    let (mut branches, mut calls) = (Vec::new(), Vec::new());
+    for (i, m) in map.iter().enumerate() {
+        let Some(j) = *m else { continue };
+        let (a, b) = (old.flow[i], new.flow[j]);
+        let (Some(ta), Some(tb)) = (a.target, b.target) else {
+            continue;
+        };
+        let Some(to) = line_of(&old.flow, ta) else {
+            continue;
+        };
+        let Some(expected) = map[to] else { continue };
+        if !anchored(&map, to, expected) || !anchored(&map, i, j) {
+            continue;
+        }
+        let Some(got) = line_of(&new.flow, tb) else {
+            continue;
+        };
+        if got != expected {
+            let d = format!(
+                "{}  now targets {:#x}, matching code moved to {:#x}",
+                line(new, j),
+                new.flow[got].pc,
+                new.flow[expected].pc
+            );
+            if a.is_call {
+                calls.push(d);
+            } else {
+                branches.push(d);
+            }
+        }
+    }
+    for (id, sev, title, mut d) in [
+        (
+            "TM-BRANCH-RETARGET",
+            Severity::High,
+            "Unchanged branches now jump somewhere else",
+            branches,
+        ),
+        (
+            "TM-CALL-RETARGET",
+            Severity::High,
+            "Unchanged calls now call a different function",
+            calls,
+        ),
+    ] {
+        if d.is_empty() {
+            continue;
+        }
+        let total = d.len();
+        d.truncate(MAX_DETAIL);
+        if total > MAX_DETAIL {
+            d.push(format!("… and {} more", total - MAX_DETAIL));
+        }
+        findings.push(Finding {
+            id,
+            severity: sev,
+            title: format!("{title} ({total})"),
+            detail: d,
+        });
+    }
+}
+
 fn is_known(k: &[u8; 32]) -> bool {
-    let b58 = bs58::encode(k).into_string();
-    KNOWN.iter().any(|(id, _)| *id == b58)
+    static IDS: std::sync::OnceLock<BTreeSet<[u8; 32]>> = std::sync::OnceLock::new();
+    IDS.get_or_init(|| {
+        KNOWN
+            .iter()
+            .filter_map(|(id, _)| bs58::decode(id).into_vec().ok()?.try_into().ok())
+            .collect()
+    })
+    .contains(k)
 }
 
 pub fn compare(old: &Program, new: &Program) -> Report {
@@ -305,29 +566,41 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let mut new_keys: Vec<[u8; 32]> = new.consts32.difference(&old.consts32).copied().collect();
-    let skip: BTreeSet<u64> = handler_discriminators(new).into_iter().collect();
-    for k in inline_keys(old, new, &skip) {
-        if !new_keys.contains(&k) {
-            new_keys.push(k);
-        }
-    }
-    let unknown: Vec<String> = new_keys
-        .iter()
-        .filter(|k| !is_known(k))
-        .take(12)
-        .map(name_key)
+    let (oh, nh) = (handlers::handlers(old), handlers::handlers(new));
+    let skip: BTreeSet<u64> = oh.keys().chain(nh.keys()).copied().collect();
+    let mut before = assembled_keys(old, &skip);
+    before.extend(old.consts32.iter().copied());
+    let fresh_inline: Vec<[u8; 32]> = assembled_keys(new, &skip)
+        .difference(&before)
+        .copied()
         .collect();
-    let known: Vec<String> = new_keys
+    let fresh_rodata: Vec<[u8; 32]> = new
+        .consts32
+        .difference(&before)
+        .filter(|k| !fresh_inline.contains(k))
+        .copied()
+        .collect();
+    let known: Vec<String> = fresh_inline
         .iter()
+        .chain(&fresh_rodata)
         .filter(|k| is_known(k))
         .map(name_key)
         .collect();
+    let mut unknown: Vec<String> = fresh_inline
+        .iter()
+        .filter(|k| !is_known(k))
+        .map(name_key)
+        .collect();
+    let (blobs, blob_count) =
+        rodata_keys(fresh_rodata.into_iter().filter(|k| !is_known(k)).collect());
+    let total = unknown.len() + blob_count;
+    unknown.extend(blobs);
+    unknown.truncate(MAX_DETAIL);
     if !unknown.is_empty() {
         findings.push(Finding {
             id: "TM-KEY-ADD",
             severity: Severity::High,
-            title: format!("{} new hardcoded key(s)", unknown.len()),
+            title: format!("{total} new hardcoded key(s)"),
             detail: unknown,
         });
     }
@@ -340,9 +613,16 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let (oi, ni) = (anchor_handlers(old), anchor_handlers(new));
-    let added_ix: Vec<_> = ni.difference(&oi).map(|s| format!("+ {s}")).collect();
-    let removed_ix: Vec<_> = oi.difference(&ni).map(|s| format!("- {s}")).collect();
+    let added_ix: Vec<_> = nh
+        .iter()
+        .filter(|(d, _)| !oh.contains_key(d))
+        .map(|(d, h)| format!("+ {}", h.label(*d)))
+        .collect();
+    let removed_ix: Vec<_> = oh
+        .iter()
+        .filter(|(d, _)| !nh.contains_key(d))
+        .map(|(d, h)| format!("- {}", h.label(*d)))
+        .collect();
     if !added_ix.is_empty() || !removed_ix.is_empty() {
         let mut d = added_ix.clone();
         d.extend(removed_ix);
@@ -358,22 +638,7 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let mut gone = Vec::new();
-    for (code, name) in ANCHOR_CHECKS {
-        let o = old.imm_counts.get(code).copied().unwrap_or(0);
-        let n = new.imm_counts.get(code).copied().unwrap_or(0);
-        if n < o {
-            gone.push(format!("{name} ({code}): {o} → {n} check sites"));
-        }
-    }
-    if !gone.is_empty() {
-        findings.push(Finding {
-            id: "TM-CHECK-GONE",
-            severity: Severity::High,
-            title: "Account checks were removed".into(),
-            detail: gone,
-        });
-    }
+    check_findings(old, new, &oh, &nh, &mut findings);
 
     if old.security_txt != new.security_txt {
         findings.push(Finding {
@@ -400,6 +665,8 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         .timeout(DIFF_DEADLINE)
         .diff_lines(&a, &b);
     let diff_exact = started.elapsed() < DIFF_DEADLINE;
+    retarget_findings(old, new, &td, &mut findings);
+    const_findings(old, new, &skip, &mut findings);
     let mut changed = 0usize;
     for c in td.iter_all_changes() {
         if c.tag() != ChangeTag::Equal {

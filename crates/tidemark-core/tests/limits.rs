@@ -19,6 +19,9 @@ fn program(norm: Vec<String>) -> Program {
         wide: Vec::new(),
         rodata: Vec::new(),
         security_txt: None,
+        flow: Vec::new(),
+        dispatch: Vec::new(),
+        error_codes: Vec::new(),
     }
 }
 
@@ -48,6 +51,7 @@ fn many_stack_constants_are_cheap() {
             pc: i as usize * 2,
             value: 0x9a8b_7c6d_5e4f_3021 ^ (i << 8),
             slot: Some((10, -64 + 8 * (i % 3) as i16)),
+            cmp: false,
         });
     }
     let (_, t) = timed(|| compare(&a, &b));
@@ -80,4 +84,49 @@ fn diff_of_unrelated_large_programs_is_bounded() {
     let (r, t) = timed(|| compare(&a, &b));
     assert!(t < Duration::from_secs(30), "took {t:?}");
     assert!(r.changed_instructions > 0);
+}
+
+#[test]
+fn huge_random_rodata_is_cheap() {
+    let a = program(vec!["exit".into()]);
+    let mut b = program(vec!["exit".into()]);
+    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let blob: Vec<u8> = (0..200_000)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect();
+    for i in 0..blob.len() - 32 {
+        b.consts32.insert(blob[i..i + 32].try_into().unwrap());
+    }
+    let (r, t) = timed(|| compare(&a, &b));
+    assert!(t < Duration::from_secs(3), "took {t:?}");
+    let f = r.findings.iter().find(|f| f.id == "TM-KEY-ADD").unwrap();
+    assert!(f.detail.len() <= 12);
+}
+
+#[test]
+fn wide_call_graph_with_many_handlers_is_cheap() {
+    let n = 200_000;
+    let mut p = program(vec!["mov64 r0, 0".into(); n]);
+    p.flow = (0..n)
+        .map(|pc| tidemark_core::elf::Flow {
+            pc,
+            ..Default::default()
+        })
+        .collect();
+    for pc in 1000..n - 1 {
+        p.flow[pc].target = Some(pc + 1);
+        p.flow[pc].is_call = true;
+    }
+    for h in 0..256u64 {
+        p.flow[h as usize].target = Some(1000);
+        p.flow[h as usize].is_call = true;
+        p.dispatch.push((0x1000 + h, h as usize, h as usize));
+    }
+    let (_, t) = timed(|| compare(&p, &p));
+    assert!(t < Duration::from_secs(5), "took {t:?}");
 }
