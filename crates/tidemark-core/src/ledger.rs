@@ -632,7 +632,7 @@ mod proofs {
         let data: [u8; REVIEWER_LEN] = kani::any();
         let len: usize = kani::any();
         kani::assume(len <= REVIEWER_LEN);
-        let _ = reviewer_from(&data[..len]);
+        let _ = reviewer_from([0; 32], &data[..len]);
     }
 
     #[kani::proof]
