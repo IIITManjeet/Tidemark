@@ -60,6 +60,11 @@ enum Cmd {
             help = "Reuse and store reviews in this directory, keyed by both hashes and the rules version"
         )]
         cache: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Ask an AI jury about the findings (needs GEMINI_KEY); advisory, never part of the verdict hash"
+        )]
+        judge: bool,
     },
     #[command(about = "Summarize one program binary")]
     Inspect { file: PathBuf },
@@ -297,6 +302,55 @@ fn rules16(v: &str) -> [u8; 16] {
     rules
 }
 
+fn print_judgement(j: &tidemark_core::judge::Judgement) {
+    out!(
+        "
+AI judge ({}), advisory: not part of the verdict hash or any attestation",
+        j.backend
+    );
+    if let Some(e) = &j.explanation {
+        out!("");
+        for line in e.lines() {
+            out!("  {line}");
+        }
+    }
+    out!("");
+    for t in &j.questions {
+        let cites = if t.cites.is_empty() {
+            String::new()
+        } else {
+            format!("  cites {}", t.cites.join(", "))
+        };
+        out!(
+            "  [{}/{} yes] {}{cites}",
+            t.yes,
+            tidemark_core::judge::VOTES,
+            t.question
+        );
+        if t.dropped + t.failed > 0 {
+            out!(
+                "             {} yes without a valid citation dropped, {} unreadable",
+                t.dropped,
+                t.failed
+            );
+        }
+    }
+    if j.risk_after > j.risk_before {
+        out!(
+            "  risk raised by the jury: {} -> {}",
+            sev_name(j.risk_before),
+            sev_name(j.risk_after)
+        );
+    }
+}
+
+fn sev_name(s: Severity) -> String {
+    serde_json::to_value(s)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_uppercase))
+        .unwrap_or_default()
+}
+
 fn attest_report(
     c: &Ctx,
     signer: &SigningKey,
@@ -362,6 +416,7 @@ fn main() -> Result<()> {
             hunks,
             fail_on,
             cache,
+            judge,
         } => {
             let gate = Severity::parse(&fail_on)?;
             let (a, b) = (read(&old)?, read(&new)?);
@@ -391,11 +446,33 @@ fn main() -> Result<()> {
             if cached {
                 out!("(from cache)");
             }
+            let mut risk = Severity::parse(r["risk"].as_str().context("report has no risk")?)?;
+            let mut judged = None;
+            if judge {
+                match tidemark_core::judge::gemini::Gemini::from_env() {
+                    None => out!(
+                        "
+AI judge skipped: set {} in the environment to use --judge",
+                        tidemark_core::judge::gemini::KEY_VAR
+                    ),
+                    Some(g) => {
+                        let j = tidemark_core::judge::judge(&g, r)?;
+                        print_judgement(&j);
+                        risk = risk.max(j.risk_after);
+                        judged = Some(j);
+                    }
+                }
+            }
             if let Some(p) = json {
                 std::fs::write(&p, serde_json::to_string_pretty(r)?)?;
                 out!("JSON report written to {}", p.display());
+                if let Some(j) = &judged {
+                    let jp = p.with_extension("judge.json");
+                    std::fs::write(&jp, serde_json::to_string_pretty(j)?)?;
+                    out!("AI judgement written to {}", jp.display());
+                }
             }
-            if Severity::parse(r["risk"].as_str().context("report has no risk")?)? >= gate {
+            if risk >= gate {
                 std::process::exit(2);
             }
         }
