@@ -356,7 +356,14 @@ exit code. The interval is at least 5 s.
 `<dir>/<rules version>/<sha256 old>-<sha256 new>.json`. Both hashes are taken
 from the input bytes before loading, so a hit skips parsing and diffing. An
 entry is used only if its report names the same rules version and both
-hashes; anything else, including a corrupt file, is a miss and is recomputed.
+hashes, its overall risk equals the highest finding severity, and its stored
+verdict and report hashes match ones recomputed from the cached report.
+Anything else, including a corrupt file, is a miss: the review is recomputed
+and the entry rewritten. This stops edits that change the risk, findings or
+hashes on their own, but entries are not signed: someone who can write the
+cache folder can rewrite an entry consistently. Treat the folder as trusted
+local state and don't restore it from an untrusted source (for example a CI
+cache shared with pull requests from forks).
 A new rules version uses a new folder, so a rules change never serves a stale
 verdict. The CLI prints from the report's JSON form, so cached and fresh
 reviews print identically.

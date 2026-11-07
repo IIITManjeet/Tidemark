@@ -331,7 +331,7 @@ docs/architecture/       HLD.md, LLD.md
 ```sh
 # review the demo upgrade (v1 → backdoored v2)
 cargo run -p tidemark-cli -- diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so --json report.json
-cargo run -p tidemark-cli -- diff old.so new.so --cache .tidemark-cache   # reuse earlier reviews
+cargo run -p tidemark-cli -- diff old.so new.so --cache .tidemark-cache   # reuse earlier reviews (trusted local folder)
 
 # publish a review of a deployed upgrade (snapshot taken before the upgrade)
 cargo run -p tidemark-cli -- init-registry --ledger <LEDGER> --threshold 1
