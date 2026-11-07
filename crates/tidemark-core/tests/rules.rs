@@ -388,3 +388,46 @@ fn handler_name_with_digits_is_matched() {
     let f = r.findings.iter().find(|f| f.id == "TM-IX-CHANGE").unwrap();
     assert_eq!(f.detail, vec!["+ sweep_1"]);
 }
+
+fn shared_helper(a_calls_helper: bool) -> Program {
+    let mut norm = vec!["mov64 r0, 0"; 60];
+    for k in [11, 21] {
+        norm[k] = "ja <l>";
+    }
+    for k in [34, 39, 54] {
+        norm[k] = "exit";
+    }
+    let mut p = program(&norm);
+    p.flow = (0..60)
+        .map(|pc| tidemark_core::elf::Flow {
+            pc,
+            ..Default::default()
+        })
+        .collect();
+    let mut calls = vec![(10, 30), (20, 35), (36, 50)];
+    if a_calls_helper {
+        calls.push((31, 50));
+    }
+    for (at, to) in calls {
+        p.flow[at].target = Some(to);
+        p.flow[at].is_call = true;
+    }
+    p.dispatch = vec![(0xaaaa, 10, 0), (0xbbbb, 20, 3)];
+    p.error_codes = vec![(51, 3010)];
+    p.imm_counts.insert(3010, 1);
+    p
+}
+
+#[test]
+fn check_dropped_from_one_caller_of_a_shared_helper_is_caught() {
+    let r = compare(&shared_helper(true), &shared_helper(false));
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-CHECK-GONE")
+        .expect("check finding");
+    assert_eq!(
+        f.detail,
+        vec!["0x000000000000aaaa: AccountNotSigner (3010): 1 → 0 check sites"]
+    );
+}
