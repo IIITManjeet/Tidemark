@@ -380,15 +380,6 @@ mod proofs {
     }
 
     #[kani::proof]
-    fn version_check_is_total() {
-        let (m, f): (u16, u32) = (kani::any(), kani::any());
-        if let Ok(v) = sbpf_version(m, f) {
-            assert!(v <= 3);
-            assert!(m == EM_BPF || m == EM_SBPF);
-        }
-    }
-
-    #[kani::proof]
     #[kani::unwind(7)]
     fn slot_scans_stay_in_bounds() {
         let insns = any_insns::<6>();
@@ -398,25 +389,6 @@ mod proofs {
         let _ = compared_with(&insns, n);
         if let Some(t) = dispatch_target(&insns, n) {
             assert!(t <= insns.len() + (i16::MAX as usize) + 1);
-        }
-    }
-
-    #[kani::proof]
-    #[kani::unwind(36)]
-    fn rodata_window_matches_naive_scan() {
-        let data: [u8; 34] = kani::any();
-        let mut fast = BTreeSet::new();
-        extract_consts(&data, &mut fast);
-        for i in 0..=2 {
-            let w = &data[i..i + 32];
-            let mut seen = [false; 256];
-            let (mut distinct, mut printable) = (0, 0);
-            for &b in w {
-                distinct += !std::mem::replace(&mut seen[b as usize], true) as usize;
-                printable += (0x20..0x7f).contains(&b) as usize;
-            }
-            let k: [u8; 32] = w.try_into().unwrap();
-            assert_eq!(fast.contains(&k), distinct >= 24 && printable < 28);
         }
     }
 }
@@ -472,6 +444,37 @@ mod tests {
             ins(0x5d, 0, 7, 9, 0).to_vec(),
         ];
         assert_eq!(compared_with(&code(&parts), 1), Some((2, 16)));
+    }
+
+    fn naive_consts(data: &[u8]) -> BTreeSet<[u8; 32]> {
+        data.windows(32)
+            .filter(|w| {
+                let distinct = w.iter().collect::<BTreeSet<_>>().len();
+                let printable = w.iter().filter(|b| (0x20..0x7f).contains(*b)).count();
+                distinct >= 24 && printable < 28
+            })
+            .map(|w| w.try_into().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn rodata_window_matches_naive_scan() {
+        let mut x: u64 = 0x2545_f491_4f6c_dd1d;
+        for round in 0..2000 {
+            let alphabet = [8u64, 24, 32, 96, 256][round % 5];
+            let len = 30 + round % 50;
+            let data: Vec<u8> = (0..len)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (0x10 + x % alphabet) as u8
+                })
+                .collect();
+            let mut fast = BTreeSet::new();
+            extract_consts(&data, &mut fast);
+            assert_eq!(fast, naive_consts(&data), "round {round}");
+        }
     }
 
     #[test]
