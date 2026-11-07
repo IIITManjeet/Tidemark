@@ -125,33 +125,39 @@ pub fn fetch(rpc: &str, program_id: &str) -> Result<Deployed> {
 }
 
 pub fn elf_len(raw: &[u8]) -> Result<usize> {
-    if raw.len() < 64 || &raw[..4] != b"\x7fELF" {
-        bail!("program data does not start with an ELF header");
+    elf_end(raw).map_err(|e| anyhow::anyhow!(e))
+}
+
+fn elf_end(raw: &[u8]) -> std::result::Result<usize, &'static str> {
+    if raw.len() < 64 || raw[..4] != *b"\x7fELF" {
+        return Err("program data does not start with an ELF header");
     }
-    let u64_at = |o: usize| u64::from_le_bytes(raw[o..o + 8].try_into().expect("8 bytes")) as usize;
+    let u64_at = |o: usize| {
+        let b = &raw[o..o + 8];
+        u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as usize
+    };
     let u16_at = |o: usize| u16::from_le_bytes([raw[o], raw[o + 1]]) as usize;
     let (phoff, shoff) = (u64_at(0x20), u64_at(0x28));
     let (phentsize, phnum) = (u16_at(0x36), u16_at(0x38));
     let (shentsize, shnum) = (u16_at(0x3a), u16_at(0x3c));
     if shnum > 0 && shentsize != 0x40 {
-        bail!("unexpected ELF section header size {shentsize}");
+        return Err("unexpected ELF section header size");
     }
     let mut end = shoff.saturating_add(shentsize.saturating_mul(shnum));
     end = end.max(phoff.saturating_add(phentsize.saturating_mul(phnum)));
     for i in 0..shnum {
-        let Some(h) = shoff.checked_add(i.saturating_mul(shentsize)) else {
+        let Some(h) = shoff.checked_add(i * 0x40) else {
             break;
         };
         if h.saturating_add(0x28) > raw.len() {
             break;
         }
-        let kind = u32::from_le_bytes(raw[h + 4..h + 8].try_into().expect("4 bytes"));
-        if kind != 8 {
+        if raw[h + 4..h + 8] != [8, 0, 0, 0] {
             end = end.max(u64_at(h + 0x18).saturating_add(u64_at(h + 0x20)));
         }
     }
     if end > raw.len() {
-        bail!("ELF header points past the end of program data");
+        return Err("ELF header points past the end of program data");
     }
     Ok(end)
 }
@@ -161,13 +167,13 @@ mod proofs {
     use super::*;
 
     #[kani::proof]
-    #[kani::unwind(4)]
+    #[kani::unwind(6)]
     fn elf_len_stays_in_bounds() {
-        let raw: [u8; 192] = kani::any();
+        let raw: [u8; 160] = kani::any();
         let len: usize = kani::any();
         kani::assume((64..=raw.len()).contains(&len));
-        kani::assume(raw[..4] == *b"ELF");
-        if let Ok(end) = elf_len(&raw[..len]) {
+        kani::assume(raw[..4] == *b"\x7fELF");
+        if let Ok(end) = elf_end(&raw[..len]) {
             assert!(end <= len);
         }
     }
