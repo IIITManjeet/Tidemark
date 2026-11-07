@@ -24,6 +24,10 @@ jobs:
           cargo install wasm-bindgen-cli --version 0.2.130 --locked
           bash scripts/build-wasm.sh
           cd npm && node test.mjs
+      - name: Build and test the VS Code extension
+        run: |
+          bash scripts/build-vscode.sh
+          cd vscode && node test.js
       - name: Review demo upgrade (fails on High/Critical, which is expected for the fixture)
         run: |
           set +e
