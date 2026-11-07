@@ -614,7 +614,7 @@ fn main() -> Result<()> {
                 bail!(
                     "entry #{index} records risk {} under {:?}, but the review it commits to is risk {} under {}; not approving",
                     a.risk,
-                    String::from_utf8_lossy(&a.rules_version).trim_end_matches(' '),
+                    String::from_utf8_lossy(&a.rules_version).trim_end_matches('\0'),
                     verdict_risk(&r),
                     r.rules_version
                 );
