@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tidemark_core::diff::{self, Report, Severity};
 use tidemark_core::submit::{self, Ctx, Pubkey};
-use tidemark_core::{elf, ledger, report_hash, rpc, verdict_hash, verdict_risk};
+use tidemark_core::{elf, ledger, rpc, verdict_hash, verdict_risk};
 
 macro_rules! out {
     ($($t:tt)*) => {{
@@ -55,6 +55,11 @@ enum Cmd {
             help = "Exit with code 2 when risk reaches this level (info, low, medium, high, critical)"
         )]
         fail_on: String,
+        #[arg(
+            long,
+            help = "Reuse and store reviews in this directory, keyed by both hashes and the rules version"
+        )]
+        cache: Option<PathBuf>,
     },
     #[command(about = "Summarize one program binary")]
     Inspect { file: PathBuf },
@@ -207,16 +212,6 @@ fn short(k: &[u8; 32]) -> String {
     format!("{}…{}", &s[..4], &s[s.len() - 4..])
 }
 
-fn sev(s: Severity) -> &'static str {
-    match s {
-        Severity::Critical => "CRITICAL",
-        Severity::High => "HIGH",
-        Severity::Medium => "MEDIUM",
-        Severity::Low => "LOW",
-        Severity::Info => "INFO",
-    }
-}
-
 struct Keys {
     signer: SigningKey,
     payer: SigningKey,
@@ -240,36 +235,50 @@ fn ctx<'a>(c: &'a Chain, k: &'a Keys) -> Result<Ctx<'a>> {
 }
 
 fn print_report(r: &Report, hunks: usize) {
-    out!("Tidemark upgrade review  ({})", r.rules_version);
-    out!(
-        "  old  {}  {} insns",
-        &r.old.sha256[..16],
-        r.old.instructions
-    );
-    out!(
-        "  new  {}  {} insns",
-        &r.new.sha256[..16],
-        r.new.instructions
-    );
+    print_value(&serde_json::to_value(r).expect("report serializes"), hunks);
+}
+
+fn print_value(r: &serde_json::Value, hunks: usize) {
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or("").to_string();
+    let label = |v: &serde_json::Value| text(v).to_uppercase();
+    let sha = |side: &str| {
+        text(&r[side]["sha256"])
+            .chars()
+            .take(16)
+            .collect::<String>()
+    };
+    out!("Tidemark upgrade review  ({})", text(&r["rules_version"]));
+    out!("  old  {}  {} insns", sha("old"), r["old"]["instructions"]);
+    out!("  new  {}  {} insns", sha("new"), r["new"]["instructions"]);
     out!(
         "  changed instructions: {} ({}%)",
-        r.changed_instructions,
-        r.churn_pct
+        r["changed_instructions"],
+        r["churn_pct"]
     );
-    out!("  overall risk: {}\n", sev(r.risk));
-    if !r.diff_exact {
+    out!("  overall risk: {}\n", label(&r["risk"]));
+    if r["diff_exact"] == false {
         out!("  note: the code diff hit its time limit; hunks and churn are approximate\n");
     }
-    for f in &r.findings {
-        out!("[{:8}] {}  {}", sev(f.severity), f.id, f.title);
-        for d in &f.detail {
-            out!("             {d}");
+    for f in r["findings"].as_array().into_iter().flatten() {
+        out!(
+            "[{:8}] {}  {}",
+            label(&f["severity"]),
+            text(&f["id"]),
+            text(&f["title"])
+        );
+        for d in f["detail"].as_array().into_iter().flatten() {
+            out!("             {}", text(d));
         }
     }
-    for h in r.hunks.iter().take(hunks) {
-        out!("\n@@ old {:#x} / new {:#x} @@", h.old_start, h.new_start);
-        for l in h.lines.iter().take(30) {
-            out!("{l}");
+    for h in r["hunks"].as_array().into_iter().flatten().take(hunks) {
+        let at = |k: &str| h[k].as_u64().unwrap_or(0);
+        out!(
+            "\n@@ old {:#x} / new {:#x} @@",
+            at("old_start"),
+            at("new_start")
+        );
+        for l in h["lines"].as_array().into_iter().flatten().take(30) {
+            out!("{}", text(l));
         }
     }
 }
@@ -346,19 +355,41 @@ fn main() -> Result<()> {
             json,
             hunks,
             fail_on,
+            cache,
         } => {
             let gate = Severity::parse(&fail_on)?;
-            let o = elf::load(&read(&old)?)?;
-            let n = elf::load(&read(&new)?)?;
-            let r = diff::compare(&o, &n);
-            print_report(&r, hunks);
-            out!("\nverdict hash  {}", verdict_hash(&r));
-            out!("report hash   {}", report_hash(&r));
+            let (a, b) = (read(&old)?, read(&new)?);
+            let (sa, sb) = (elf::sha256_hex(&a), elf::sha256_hex(&b));
+            let hit = cache
+                .as_deref()
+                .and_then(|d| tidemark_core::cache::get(d, &sa, &sb));
+            let cached = hit.is_some();
+            let e = match hit {
+                Some(e) => e,
+                None => {
+                    let r = diff::compare(&elf::load(&a)?, &elf::load(&b)?);
+                    let e = tidemark_core::cache::entry(&r);
+                    if let Some(d) = &cache {
+                        tidemark_core::cache::put(d, &sa, &sb, &e)?;
+                    }
+                    e
+                }
+            };
+            let r = &e["report"];
+            print_value(r, hunks);
+            out!(
+                "\nverdict hash  {}",
+                e["verdict_hash"].as_str().unwrap_or("")
+            );
+            out!("report hash   {}", e["report_hash"].as_str().unwrap_or(""));
+            if cached {
+                out!("(from cache)");
+            }
             if let Some(p) = json {
-                std::fs::write(&p, serde_json::to_string_pretty(&r)?)?;
+                std::fs::write(&p, serde_json::to_string_pretty(r)?)?;
                 out!("JSON report written to {}", p.display());
             }
-            if r.risk >= gate {
+            if Severity::parse(r["risk"].as_str().unwrap_or("info"))? >= gate {
                 std::process::exit(2);
             }
         }
