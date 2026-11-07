@@ -1,0 +1,30 @@
+{
+  "name": "tidemark-wasm",
+  "version": "0.1.0",
+  "description": "Review Solana program upgrades from sBPF bytecode, in the browser or Node",
+  "license": "MIT",
+  "repository": "github:IIITManjeet/Tidemark",
+  "type": "module",
+  "main": "dist/tidemark.js",
+  "types": "dist/tidemark.d.ts",
+  "files": [
+    "dist",
+    "ledger.js",
+    "README.md"
+  ],
+  "keywords": [
+    "solana",
+    "sbpf",
+    "security",
+    "upgrade",
+    "wasm"
+  ],
+  "scripts": {
+    "build": "bash ../scripts/build-wasm.sh",
+    "test": "node test.mjs"
+  },
+  "exports": {
+    ".": "./dist/tidemark.js",
+    "./ledger.js": "./ledger.js"
+  }
+}
