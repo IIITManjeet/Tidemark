@@ -159,14 +159,20 @@ function explorer(kind, key) {
   return `https://explorer.solana.com/${kind}/${key}?cluster=devnet`;
 }
 
-function renderLedger(v) {
+function sameChain(a, b) {
+  const hashes = (v) => v.entries.map((e) => e.entry_hash).join(",");
+  return a.registry.head === b.registry.head && a.registry.count === b.registry.count && hashes(a) === hashes(b);
+}
+
+function renderLedger(v, rpcs) {
   const chain = $("chain");
   chain.className = `risk ${v.ok ? "risk-ok" : "risk-bad"}`;
-  chain.replaceChildren(
-    el("small", {}, "Chain"),
-    el("b", {}, v.ok ? "VERIFIED" : "BROKEN"),
-    el("small", {}, v.ok ? "links, addresses and quorums check out, as served by this RPC" : v.error),
-  );
+  const note = !v.ok
+    ? v.error
+    : rpcs > 1
+      ? `links, addresses and quorums check out; ${rpcs} RPCs agree on the head`
+      : "links, addresses and quorums check out, as served by this one RPC";
+  chain.replaceChildren(el("small", {}, "Chain"), el("b", {}, v.ok ? "VERIFIED" : "BROKEN"), el("small", {}, note));
   $("count").textContent = v.registry.count;
   $("quorum").textContent = `${v.registry.threshold} of ${v.registry.active_reviewers}`;
   $("authority").textContent = short(v.registry.authority, 6);
@@ -207,7 +213,16 @@ $("ledger-form").addEventListener("submit", async (ev) => {
   btn.textContent = "Verifying…";
   try {
     await ready;
-    renderLedger(await fetchLedger(form.get("rpc").trim(), form.get("ledger").trim(), form.get("registry").trim()));
+    const ledger = form.get("ledger").trim();
+    const registry = form.get("registry").trim();
+    const urls = [form.get("rpc").trim(), form.get("rpc2").trim()].filter(Boolean);
+    const views = await Promise.all(urls.map((u) => fetchLedger(u, ledger, registry)));
+    const [v] = views;
+    if (views.length > 1 && !sameChain(views[0], views[1])) {
+      v.ok = false;
+      v.error = "the two RPCs disagree about this chain; trust neither";
+    }
+    renderLedger(v, views.length);
   } catch (e) {
     $("ledger-result").hidden = true;
     showError("ledger-error", `Could not verify: ${e.message ?? e}`);

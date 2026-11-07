@@ -14,7 +14,7 @@ is, and writes every review to a public, hash-linked ledger on Solana.
 
 ```
 $ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
-Tidemark upgrade review  (tm-rules-0.3)
+Tidemark upgrade review  (tm-rules-0.4)
   old  99e7c4fe98f886be  20066 insns
   new  519015fa4879499f  20608 insns
   changed instructions: 996 (2.45%)
@@ -60,7 +60,7 @@ refused with a clear message instead of being mis-read.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
 
 ### 2. Upgrade risk rules · Shipped
-Deterministic, versioned rules (`tm-rules-0.3`) turn a diff into ranked findings:
+Deterministic, versioned rules (`tm-rules-0.4`) turn a diff into ranked findings:
 
 | Rule | What it catches |
 |---|---|
@@ -73,6 +73,7 @@ Deterministic, versioned rules (`tm-rules-0.3`) turn a diff into ranked findings
 | `TM-BRANCH-RETARGET` | A branch that looks unchanged now jumps to different code |
 | `TM-CALL-RETARGET` | A call that looks unchanged now calls a different function |
 | `TM-CONST-CHANGE` | 64-bit constants (not addresses, not handler discriminators) that are no longer used |
+| `TM-CONST-ADD` | New 64-bit constants (informational) |
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
 
@@ -188,7 +189,7 @@ each review on the ledger, using the same path as `tidemark attest`.
 $ tidemark watch 5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3
 5pHTpt…: baseline snapshot at slot 519447118
 5pHTpt…: upgraded, slot 519447118 -> 519503311
-Tidemark upgrade review  (tm-rules-0.3) …
+Tidemark upgrade review  (tm-rules-0.4) …
 ```
 
 The watcher needs to be running before an upgrade to have the old version;
@@ -248,8 +249,12 @@ keys never share a process with untrusted input.
   The WASM engine produces the same findings, hunks and verdict hash as the CLI.
   Files never leave the browser.
 - **Ledger**: enter an RPC endpoint, ledger program and registry. The page
-  pulls the raw accounts and verifies the hash chain, PDAs, reviewer allowlist
-  and quorum itself, then lists each attestation with its risk and approvals.
+  pulls the raw accounts at `finalized` commitment and verifies the hash
+  chain, PDAs, reviewer allowlist and quorum itself, then lists each
+  attestation with its risk and approvals. A single RPC could serve a
+  consistent but stale or fake chain, so the page says which view it trusted.
+  Add a second RPC and it shows VERIFIED only if both agree on the head and
+  every entry hash.
 - Restrained dark interface: near-black panels with fine rules, a serif for
   headings, blue for actions and orange reserved for high-risk findings.
   Severity is always written out as text as well as colour.

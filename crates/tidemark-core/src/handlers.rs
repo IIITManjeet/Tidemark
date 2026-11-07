@@ -208,6 +208,15 @@ fn dispatch_table(all: &[(u64, usize, usize)]) -> &[(u64, usize, usize)] {
     best
 }
 
+pub fn stray_discriminators(p: &Program) -> BTreeSet<u64> {
+    let table: BTreeSet<u64> = dispatch_table(&p.dispatch).iter().map(|e| e.0).collect();
+    p.dispatch
+        .iter()
+        .map(|e| e.0)
+        .filter(|d| !table.contains(d))
+        .collect()
+}
+
 pub fn handlers(p: &Program) -> BTreeMap<u64, Handler> {
     let mut targets: BTreeMap<u64, usize> = BTreeMap::new();
     for &(d, t, _) in dispatch_table(&p.dispatch).iter().take(MAX_HANDLERS) {

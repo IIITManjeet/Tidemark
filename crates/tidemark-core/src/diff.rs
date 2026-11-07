@@ -73,7 +73,7 @@ pub struct Report {
     pub hunks: Vec<Hunk>,
 }
 
-pub const RULES_VERSION: &str = "tm-rules-0.3";
+pub const RULES_VERSION: &str = "tm-rules-0.4";
 
 const KNOWN: &[(&str, &str)] = &[
     ("11111111111111111111111111111111", "System Program"),
@@ -314,14 +314,26 @@ fn const_findings(old: &Program, new: &Program, skip: &BTreeSet<u64>, findings: 
         .filter(|v| !skip.contains(v))
         .copied()
         .collect();
-    if gone.is_empty() {
-        return;
-    }
     let added: Vec<u64> = b
         .difference(&a)
         .filter(|v| !skip.contains(v))
         .copied()
         .collect();
+    if gone.is_empty() {
+        if !added.is_empty() {
+            findings.push(Finding {
+                id: "TM-CONST-ADD",
+                severity: Severity::Low,
+                title: format!("{} new 64-bit constant(s)", added.len()),
+                detail: added
+                    .iter()
+                    .take(MAX_DETAIL)
+                    .map(|v| format!("+ {v:#x}"))
+                    .collect(),
+            });
+        }
+        return;
+    }
     let mut detail: Vec<String> = gone
         .iter()
         .take(MAX_DETAIL)
@@ -635,6 +647,26 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         .filter(|(d, _)| !oh.contains_key(d))
         .map(|(d, h)| format!("+ {}", h.label(*d)))
         .collect();
+    let key_limbs: BTreeSet<u64> = fresh_inline
+        .iter()
+        .flat_map(|k| {
+            k.chunks(8)
+                .map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes")))
+        })
+        .collect();
+    let seen_before: BTreeSet<u64> = old
+        .wide
+        .iter()
+        .map(|w| w.value)
+        .chain(oh.keys().copied())
+        .collect();
+    let mut added_ix = added_ix;
+    added_ix.extend(
+        handlers::stray_discriminators(new)
+            .into_iter()
+            .filter(|d| !seen_before.contains(d) && !nh.contains_key(d) && !key_limbs.contains(d))
+            .map(|d| format!("+ {d:#018x} (outside the dispatch table)")),
+    );
     let removed_ix: Vec<_> = oh
         .iter()
         .filter(|(d, _)| !nh.contains_key(d))
@@ -683,7 +715,8 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         .diff_lines(&a, &b);
     let diff_exact = started.elapsed() < DIFF_DEADLINE;
     retarget_findings(old, new, &td, &mut findings);
-    const_findings(old, new, &skip, &mut findings);
+    let const_skip: BTreeSet<u64> = skip.union(&key_limbs).copied().collect();
+    const_findings(old, new, &const_skip, &mut findings);
     let mut changed = 0usize;
     for c in td.iter_all_changes() {
         if c.tag() != ChangeTag::Equal {

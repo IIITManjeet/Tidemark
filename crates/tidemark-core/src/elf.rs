@@ -45,7 +45,14 @@ pub struct Flow {
 }
 
 fn is_address(v: u64, image_end: u64) -> bool {
-    v < image_end || matches!(v >> 32, 1..=4)
+    let off = v & 0xffff_ffff;
+    v < image_end
+        || match v >> 32 {
+            1 => off < image_end,
+            2 | 3 => off < 1 << 24,
+            4 => off < 1 << 28,
+            _ => false,
+        }
 }
 
 const EM_BPF: u16 = 247;
@@ -479,6 +486,23 @@ mod tests {
             let mut fast = BTreeSet::new();
             extract_consts(&data, &mut fast);
             assert_eq!(fast, naive_consts(&data), "round {round}");
+        }
+    }
+
+    #[test]
+    fn lamport_limits_are_constants_not_addresses() {
+        let image_end = 0x4_0000;
+        for v in [5_000_000_000u64, 10_000_000_000, 1_000_000_000] {
+            assert!(!is_address(v, image_end), "{v}");
+        }
+        for v in [
+            0x1_0000_0100u64,
+            0x2_0000_1000,
+            0x3_0000_0008,
+            0x4_0000_0010,
+            0x100,
+        ] {
+            assert!(is_address(v, image_end), "{v:#x}");
         }
     }
 

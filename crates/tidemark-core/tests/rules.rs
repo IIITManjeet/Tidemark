@@ -520,3 +520,29 @@ fn decoy_dispatch_cluster_does_not_hide_a_removed_check() {
         vec!["outside any handler: ConstraintSigner (2002): 1 → 0 check sites"]
     );
 }
+
+#[test]
+fn new_discriminator_outside_the_dispatch_table_is_reported() {
+    let a = two_handlers(&[]);
+    let mut b = two_handlers(&[]);
+    b.dispatch.push((0xcafe_f00d_1234_5678, 30, 300));
+    let r = compare(&a, &b);
+    let f = r.findings.iter().find(|f| f.id == "TM-IX-CHANGE").unwrap();
+    assert_eq!(
+        f.detail,
+        vec!["+ 0xcafef00d12345678 (outside the dispatch table)"]
+    );
+}
+
+#[test]
+fn constants_that_are_only_added_are_reported_low() {
+    let mut a = program(&["mov64 r0, 0", "exit"]);
+    a.flow = vec![Default::default(); 2];
+    let mut b = program(&["lddw r1, 0x12a05f200", "exit"]);
+    b.flow = vec![Default::default(); 2];
+    b.flow[0].constant = Some(5_000_000_000);
+    let r = compare(&a, &b);
+    let f = r.findings.iter().find(|f| f.id == "TM-CONST-ADD").unwrap();
+    assert_eq!(f.severity, Severity::Low);
+    assert_eq!(f.detail, vec!["+ 0x12a05f200"]);
+}

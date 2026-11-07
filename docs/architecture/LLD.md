@@ -75,7 +75,7 @@ its upper half is a VM region (1 to 4). Everything else is a constant and is
 compared as-is. Alongside each line the loader keeps a `Flow` record: the
 absolute branch or internal-call target and the constant, if any.
 
-### 2.3 Rules (`diff.rs`, `tm-rules-0.3`)
+### 2.3 Rules (`diff.rs`, `tm-rules-0.4`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
@@ -90,6 +90,7 @@ absolute branch or internal-call target and the constant, if any.
 | TM-BRANCH-RETARGET | an aligned branch whose target no longer maps to the old target (see below) | High |
 | TM-CALL-RETARGET | same, for internal calls | High |
 | TM-CONST-CHANGE | constants present in old and missing in new, excluding handler discriminators | Medium |
+| TM-CONST-ADD | constants only added, excluding discriminators and new key limbs | Low |
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
 
@@ -192,13 +193,18 @@ timeout and a 64 MiB response cap.
 When the diff deadline is hit the report sets `diff_exact: false` and the CLI
 says the hunks are approximate.
 
-Known limits of the rules, beyond those above: `lddw` values that look like
-addresses (below the image end, or upper half 1–4) are not tracked as
-constants, so a limit in that range can change unnoticed; only the largest
-dispatch cluster is treated as the handler table; constants that are only
-added (none removed) don't raise TM-CONST-CHANGE; and an honest compiler
-change that merges identical error returns lowers check counts and can raise
-a false TM-CHECK-GONE.
+An `lddw` value counts as an address only if it falls inside a real VM region
+layout: below the image end, program region (upper half 1) with an offset
+below the image end, stack or heap (upper half 2 or 3) below 16 MiB, or input
+(upper half 4) below 256 MiB. So lamport limits such as 5 or 10 SOL are
+tracked as constants. Constants that only appear in the new version raise
+TM-CONST-ADD (Low); limbs of a key TM-KEY-ADD already reports are left out.
+Discriminator compares outside the largest dispatch cluster that are new in
+this version, and not limbs of a new key, are listed under TM-IX-CHANGE as
+`(outside the dispatch table)`.
+
+Known limit: an honest compiler change that merges identical error returns
+lowers check counts and can raise a false TM-CHECK-GONE.
 
 ## 3. tidemark-cli
 
