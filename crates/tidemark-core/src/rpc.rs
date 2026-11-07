@@ -133,6 +133,9 @@ pub fn elf_len(raw: &[u8]) -> Result<usize> {
     let (phoff, shoff) = (u64_at(0x20), u64_at(0x28));
     let (phentsize, phnum) = (u16_at(0x36), u16_at(0x38));
     let (shentsize, shnum) = (u16_at(0x3a), u16_at(0x3c));
+    if shnum > 0 && shentsize != 0x40 {
+        bail!("unexpected ELF section header size {shentsize}");
+    }
     let mut end = shoff.saturating_add(shentsize.saturating_mul(shnum));
     end = end.max(phoff.saturating_add(phentsize.saturating_mul(phnum)));
     for i in 0..shnum {
@@ -153,9 +156,34 @@ pub fn elf_len(raw: &[u8]) -> Result<usize> {
     Ok(end)
 }
 
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn elf_len_stays_in_bounds() {
+        let raw: [u8; 192] = kani::any();
+        let len: usize = kani::any();
+        kani::assume((64..=raw.len()).contains(&len));
+        kani::assume(raw[..4] == *b"ELF");
+        if let Ok(end) = elf_len(&raw[..len]) {
+            assert!(end <= len);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn odd_section_header_size_is_refused() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let mut bytes = std::fs::read(dir.join("demo_vault_v1.so")).unwrap();
+        bytes[0x3a..0x3c].copy_from_slice(&0u16.to_le_bytes());
+        assert!(elf_len(&bytes).is_err());
+    }
 
     #[test]
     fn elf_len_matches_file_size_with_padding() {
