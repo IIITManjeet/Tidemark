@@ -1,62 +1,45 @@
 {
-  "tool": "tidemark-core 0.1.0",
-  "rules_version": "tm-rules-0.3",
-  "old": {
-    "sha256": "99e7c4fe98f886bea4e92a6f093598d0789eb2f2ef436b09feb1c1a9311e4c2d",
-    "size": 206024,
-    "instructions": 20066,
-    "sbpf_version": 0
-  },
-  "new": {
-    "sha256": "519015fa4879499f49f8bf70a17372aa7a09c78b4c64d26dff7ae43e79d2e27f",
-    "size": 210752,
-    "instructions": 20608,
-    "sbpf_version": 0
-  },
-  "risk": "high",
   "changed_instructions": 996,
   "churn_pct": 2.45,
   "diff_exact": true,
   "findings": [
     {
-      "id": "TM-KEY-ADD",
-      "severity": "high",
-      "title": "1 new hardcoded key(s)",
       "detail": [
         "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"
-      ]
+      ],
+      "id": "TM-KEY-ADD",
+      "severity": "high",
+      "title": "1 new hardcoded key(s)"
     },
     {
-      "id": "TM-CHECK-GONE",
-      "severity": "high",
-      "title": "Account checks were removed",
       "detail": [
         "withdraw: ConstraintHasOne (2001): 1 → 0 check sites",
         "withdraw: AccountNotSigner (3010): 1 → 0 check sites"
-      ]
+      ],
+      "id": "TM-CHECK-GONE",
+      "severity": "high",
+      "title": "Account checks were removed"
     },
     {
-      "id": "TM-IX-CHANGE",
-      "severity": "medium",
-      "title": "Instruction handlers added or removed",
       "detail": [
         "+ sweep"
-      ]
+      ],
+      "id": "TM-IX-CHANGE",
+      "severity": "medium",
+      "title": "Instruction handlers added or removed"
     },
     {
-      "id": "TM-SYSCALL-ADD",
-      "severity": "info",
-      "title": "Syscall usage increased",
       "detail": [
         "abort: 12 → 13 call sites",
         "sol_log_: 26 → 27 call sites"
-      ]
+      ],
+      "id": "TM-SYSCALL-ADD",
+      "severity": "info",
+      "title": "Syscall usage increased"
     }
   ],
   "hunks": [
     {
-      "old_start": 908,
-      "new_start": 908,
       "lines": [
         "     3bc  add64 r1, -1",
         "     3bd  stxdw [r8+0], r1",
@@ -95,11 +78,11 @@
         "     3bf  lddw r1, 0x300000000",
         "     3c1  ldxdw r2, [r1+0]",
         "     3c2  mov64 r1, r2"
-      ]
+      ],
+      "new_start": 908,
+      "old_start": 908
     },
     {
-      "old_start": 964,
-      "new_start": 995,
       "lines": [
         "     3fe  lddw r3, 0x2c990",
         "     400  call 0x3bca",
@@ -145,11 +128,11 @@
         "     42d  ldxw r3, [r2+52]",
         "     42e  mov64 r4, r3",
         "     42f  and64 r4, 16"
-      ]
+      ],
+      "new_start": 995,
+      "old_start": 964
     },
     {
-      "old_start": 1015,
-      "new_start": 1009,
       "lines": [
         "     437  ja 0x439",
         "     438  call 0x4a81",
@@ -163,11 +146,11 @@
         "     43a  mov64 r1, r2",
         "     43b  lddw r2, 0x29560",
         "     43d  mov64 r3, 2"
-      ]
+      ],
+      "new_start": 1009,
+      "old_start": 1015
     },
     {
-      "old_start": 1920,
-      "new_start": 1920,
       "lines": [
         "     7f9  lddw r7, 0x22a16d949c4612b7",
         "     7fb  jeq r0, r7, 0x838",
@@ -178,11 +161,11 @@
         "     7fd  lddw r7, 0xa69e9a778bcf440",
         "     7ff  jeq r0, r7, 0x843",
         "     800  ldxdw r1, [r5+0]"
-      ]
+      ],
+      "new_start": 1920,
+      "old_start": 1920
     },
     {
-      "old_start": 1959,
-      "new_start": 1962,
       "lines": [
         "     824  add64 r1, -8",
         "     825  stxdw [r10-4088], r1",
@@ -201,11 +184,11 @@
         "     827  add64 r1, -128",
         "     828  mov64 r5, r10",
         "     829  call 0x81e"
-      ]
+      ],
+      "new_start": 1962,
+      "old_start": 1959
     },
     {
-      "old_start": 4176,
-      "new_start": 4190,
       "lines": [
         "    1124  stxdw [r1+8], r8",
         "    1125  stxdw [r1+0], r6",
@@ -265,11 +248,11 @@
         "    1127  ldxdw r6, [r2+8]",
         "    1128  ldxdw r2, [r6+64]",
         "    1129  ldxdw r9, [r2+8]"
-      ]
+      ],
+      "new_start": 4190,
+      "old_start": 4176
     },
     {
-      "old_start": 4515,
-      "new_start": 4581,
       "lines": [
         "    1278  stxdw [r3+8], r2",
         "    1279  stxdw [r3+0], r1",
@@ -468,11 +451,11 @@
         "    127b  mov64 r2, r1",
         "    127c  mov64 r1, r10",
         "    127d  add64 r1, -72"
-      ]
+      ],
+      "new_start": 4581,
+      "old_start": 4515
     },
     {
-      "old_start": 6529,
-      "new_start": 6786,
       "lines": [
         "    1a92  ldxdw r1, [r10-416]",
         "    1a93  ldxdw r2, [r10-408]",
@@ -965,11 +948,11 @@
         "    1b3c  ldxdw r1, [r9+0]",
         "    1b3d  ldxdw r2, [r1+24]",
         "    1b3e  stxdw [r10-80], r2"
-      ]
+      ],
+      "new_start": 6786,
+      "old_start": 6529
     },
     {
-      "old_start": 6714,
-      "new_start": 7168,
       "lines": [
         "    1b51  stxdw [r10-32], r1",
         "    1b52  mov64 r1, 1",
@@ -1040,11 +1023,11 @@
         "    1b72  ldxw r1, [r10-140]",
         "    1b73  stxw [r10-205], r1",
         "    1b74  ldxw r1, [r10-143]"
-      ]
+      ],
+      "new_start": 7168,
+      "old_start": 6714
     },
     {
-      "old_start": 6757,
-      "new_start": 7231,
       "lines": [
         "    1b7d  stxdw [r10-201], r1",
         "    1b7e  ldxdw r1, [r10-128]",
@@ -1054,11 +1037,11 @@
         "    1b81  ldxdw r7, [r4+0]",
         "    1b82  ldxdw r1, [r7+24]",
         "    1b83  stxdw [r10-40], r1"
-      ]
+      ],
+      "new_start": 7231,
+      "old_start": 6757
     },
     {
-      "old_start": 6770,
-      "new_start": 7244,
       "lines": [
         "    1b8a  ldxdw r2, [r10-208]",
         "    1b8b  jeq r1, r2, 0x1b8e",
@@ -1098,11 +1081,11 @@
         "    1ba8  ldxdw r1, [r7+24]",
         "    1ba9  stxdw [r10-40], r1",
         "    1baa  ldxdw r1, [r7+16]"
-      ]
+      ],
+      "new_start": 7244,
+      "old_start": 6770
     },
     {
-      "old_start": 6813,
-      "new_start": 7275,
       "lines": [
         "    1bb6  ldxdw r1, [r10-184]",
         "    1bb7  stxdw [r10-8], r1",
@@ -1279,7 +1262,24 @@
         "    1bf5  ja 0x1b6c",
         "    1bf6  mov64 r9, r3",
         "    1bf7  mov64 r6, r1"
-      ]
+      ],
+      "new_start": 7275,
+      "old_start": 6813
     }
-  ]
+  ],
+  "new": {
+    "instructions": 20608,
+    "sbpf_version": 0,
+    "sha256": "519015fa4879499f49f8bf70a17372aa7a09c78b4c64d26dff7ae43e79d2e27f",
+    "size": 210752
+  },
+  "old": {
+    "instructions": 20066,
+    "sbpf_version": 0,
+    "sha256": "99e7c4fe98f886bea4e92a6f093598d0789eb2f2ef436b09feb1c1a9311e4c2d",
+    "size": 206024
+  },
+  "risk": "high",
+  "rules_version": "tm-rules-0.4",
+  "tool": "tidemark-core 0.1.0"
 }

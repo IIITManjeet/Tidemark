@@ -75,7 +75,7 @@ its upper half is a VM region (1 to 4). Everything else is a constant and is
 compared as-is. Alongside each line the loader keeps a `Flow` record: the
 absolute branch or internal-call target and the constant, if any.
 
-### 2.3 Rules (`diff.rs`, `tm-rules-0.3`)
+### 2.3 Rules (`diff.rs`, `tm-rules-0.4`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
