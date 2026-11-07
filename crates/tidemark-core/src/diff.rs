@@ -73,7 +73,7 @@ pub struct Report {
     pub hunks: Vec<Hunk>,
 }
 
-pub const RULES_VERSION: &str = "tm-rules-0.5";
+pub const RULES_VERSION: &str = "tm-rules-0.6";
 
 const KNOWN: &[(&str, &str)] = &[
     ("11111111111111111111111111111111", "System Program"),
@@ -400,6 +400,8 @@ fn split_key_findings(new: &Program, added: &[u64], findings: &mut Vec<Finding>)
             .collect(),
     });
 }
+
+const LAYOUT_RULES: [&str; 3] = ["TM-BRANCH-RETARGET", "TM-CALL-RETARGET", "TM-GUARD-GONE"];
 
 const SHAPE_WINDOW: usize = 64;
 
@@ -832,12 +834,18 @@ pub fn compare(old: &Program, new: &Program) -> Report {
     let (blobs, blob_count) =
         rodata_keys(fresh_rodata.into_iter().filter(|k| !is_known(k)).collect());
     let total = unknown.len() + blob_count;
+    let inline_keys = !unknown.is_empty();
+    let migrating = old.sbpf_version != new.sbpf_version;
     unknown.extend(blobs);
     unknown.truncate(MAX_DETAIL);
     if !unknown.is_empty() {
         findings.push(Finding {
             id: "TM-KEY-ADD",
-            severity: Severity::High,
+            severity: if migrating && !inline_keys {
+                Severity::Medium
+            } else {
+                Severity::High
+            },
             title: format!("{total} new hardcoded key(s)"),
             detail: unknown,
         });
@@ -1010,6 +1018,23 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
+    if migrating {
+        for f in findings.iter_mut().filter(|f| LAYOUT_RULES.contains(&f.id)) {
+            f.severity = f.severity.min(Severity::Medium);
+        }
+        findings.push(Finding {
+            id: "TM-VERSION-CHANGE",
+            severity: Severity::Medium,
+            title: format!(
+                "sBPF version changed: v{} → v{}",
+                old.sbpf_version, new.sbpf_version
+            ),
+            detail: vec![
+                "The whole program was recompiled for a different target, so layout-sensitive rules are capped at Medium.".into(),
+                "A migration is a good place to hide a change; review the source diff too.".into(),
+            ],
+        });
+    }
     findings.sort_by_key(|f| std::cmp::Reverse(f.severity));
     let risk = findings
         .iter()
