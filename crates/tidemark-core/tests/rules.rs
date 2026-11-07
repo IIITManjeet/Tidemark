@@ -23,6 +23,7 @@ fn program(norm: &[&str]) -> Program {
         wide: Vec::new(),
         rodata: Vec::new(),
         security_txt: None,
+        flow: Vec::new(),
     }
 }
 

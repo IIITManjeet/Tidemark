@@ -65,7 +65,14 @@ Instruction word: `op:u8 | dst:u4 src:u4 | off:i16 | imm:i32`. `lddw`
 masks jump targets, internal call targets and `lddw` addresses so code that
 only moved compares equal. Syscall names and ALU immediates are kept.
 
-### 2.3 Rules (`diff.rs`, `tm-rules-0.2`)
+The loader then puts real 64-bit constants back into the normalized line. An
+`lddw` counts as an address if a `R_BPF_64_RELATIVE` or `R_BPF_64_64`
+relocation points at it, if it falls below the end of the loaded image, or if
+its upper half is a VM region (1 to 4). Everything else is a constant and is
+compared as-is. Alongside each line the loader keeps a `Flow` record: the
+absolute branch or internal-call target and the constant, if any.
+
+### 2.3 Rules (`diff.rs`, `tm-rules-0.3`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
@@ -76,6 +83,9 @@ only moved compares equal. Syscall names and ALU immediates are kept.
 | TM-SYSCALL-ADD | call-site count of a syscall rose | High for `invoke_signed*`, Low for other sensitive syscalls, else Info |
 | TM-SYSCALL-DEL | call-site count fell | Info |
 | TM-CALLX-ADD | more `callx` sites | Medium |
+| TM-BRANCH-RETARGET | an aligned branch whose target no longer maps to the old target (see below) | High |
+| TM-CALL-RETARGET | same, for internal calls | High |
+| TM-CONST-CHANGE | constants present in old and missing in new, excluding handler discriminators | Medium |
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
 
@@ -87,6 +97,19 @@ that register within the next 8 instructions. A key is reported when four new,
 high-entropy immediates (6+ distinct bytes, upper half above 0x10, not a
 handler discriminator) land in consecutive slots of one base register within
 64 instructions. 32-byte windows in `.rodata` are still checked as well.
+
+**Retargets.** Normalization hides targets, so a branch moved by one
+instruction diffs as unchanged. The rule maps old lines to new lines through
+the `Equal` runs of the line diff, then checks every aligned branch and call:
+the old target, mapped forward, must be the new target. The line diff can pair
+look-alike blocks wrongly (Anchor handler stubs differ only in stack offsets),
+so the map is refined first. Aligned branches vote on where each old target
+went; when every vote agrees and the two blocks have the same opcode sequence
+up to the next `ja`/`exit` (at least two instructions), that block is remapped.
+Calls then vote the same way. A mismatch is reported only if both the
+instruction and the old target sit inside runs aligned for 4 lines either
+side, which drops pairings inside rewritten code. Moving a branch onto a block
+with an identical opcode sequence is not caught.
 
 Overall risk is the highest finding severity. Code hunks come from a line diff
 of normalized disassembly with three lines of context, shown in readable form.

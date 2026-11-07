@@ -14,10 +14,10 @@ is, and writes every review to a public, hash-linked ledger on Solana.
 
 ```
 $ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
-Tidemark upgrade review  (tm-rules-0.2)
+Tidemark upgrade review  (tm-rules-0.3)
   old  99e7c4fe98f886be  20066 insns
   new  519015fa4879499f  20608 insns
-  changed instructions: 986 (2.42%)
+  changed instructions: 996 (2.45%)
   overall risk: HIGH
 
 [HIGH    ] TM-KEY-ADD  1 new hardcoded key(s)
@@ -59,7 +59,7 @@ refused with a clear message instead of being mis-read.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
 
 ### 2. Upgrade risk rules · Shipped
-Deterministic, versioned rules (`tm-rules-0.2`) turn a diff into ranked findings:
+Deterministic, versioned rules (`tm-rules-0.3`) turn a diff into ranked findings:
 
 | Rule | What it catches |
 |---|---|
@@ -68,6 +68,9 @@ Deterministic, versioned rules (`tm-rules-0.2`) turn a diff into ranked findings
 | `TM-IX-CHANGE` | Instruction handlers added or removed, each name confirmed by matching `sha256("global:<name>")[..8]` in the code |
 | `TM-SYSCALL-ADD` | New `invoke_signed` and other sensitive syscall call sites |
 | `TM-CALLX-ADD` | New indirect calls with runtime-computed targets |
+| `TM-BRANCH-RETARGET` | A branch that looks unchanged now jumps to different code |
+| `TM-CALL-RETARGET` | A call that looks unchanged now calls a different function |
+| `TM-CONST-CHANGE` | 64-bit constants (not addresses, not handler discriminators) that are no longer used |
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
 
