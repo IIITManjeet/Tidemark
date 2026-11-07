@@ -1,0 +1,39 @@
+{
+  "name": "tidemark-vscode",
+  "displayName": "Tidemark",
+  "description": "Review a Solana program upgrade from bytecode before you deploy it",
+  "version": "0.1.0",
+  "publisher": "tidemark",
+  "license": "MIT",
+  "repository": "https://github.com/IIITManjeet/Tidemark",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Other"],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "tidemark.reviewDeployed", "title": "Tidemark: Review a build against the deployed program" },
+      { "command": "tidemark.reviewFiles", "title": "Tidemark: Review two program binaries" }
+    ],
+    "configuration": {
+      "title": "Tidemark",
+      "properties": {
+        "tidemark.rpc": {
+          "type": "string",
+          "default": "https://api.devnet.solana.com",
+          "description": "JSON-RPC endpoint used to fetch the deployed program"
+        },
+        "tidemark.warnAt": {
+          "type": "string",
+          "enum": ["info", "low", "medium", "high", "critical"],
+          "default": "high",
+          "description": "Show a warning when the review reaches this risk"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "bash ../scripts/build-vscode.sh",
+    "test": "node test.js"
+  }
+}
