@@ -53,6 +53,43 @@ pub fn verdict_hash(report: &diff::Report) -> String {
     canonical_hash(&verdict(report))
 }
 
+fn rank(s: &serde_json::Value) -> Option<u8> {
+    Some(match s.as_str()? {
+        "info" => 0,
+        "low" => 1,
+        "medium" => 2,
+        "high" => 3,
+        "critical" => 4,
+        _ => return None,
+    })
+}
+
+pub fn checked_hashes(report: &serde_json::Value) -> Option<(String, String)> {
+    let all = report["findings"].as_array()?;
+    let ranks = all
+        .iter()
+        .map(|f| rank(&f["severity"]))
+        .collect::<Option<Vec<u8>>>()?;
+    if rank(&report["risk"])? != ranks.iter().copied().max().unwrap_or(0) {
+        return None;
+    }
+    let kept: Vec<&serde_json::Value> = all.iter().filter(|f| f["id"] != "TM-CHURN").collect();
+    let risk = kept
+        .iter()
+        .filter_map(|f| rank(&f["severity"]))
+        .max()
+        .unwrap_or(0);
+    let names = ["info", "low", "medium", "high", "critical"];
+    let verdict = serde_json::json!({
+        "rules_version": report["rules_version"],
+        "old": report["old"]["sha256"],
+        "new": report["new"]["sha256"],
+        "risk": names[risk as usize],
+        "findings": kept,
+    });
+    Some((canonical_hash(&verdict), canonical_hash(report)))
+}
+
 pub fn bs58_encode(b: &[u8]) -> String {
     bs58::encode(b).into_string()
 }
@@ -82,6 +119,22 @@ pub fn parse_risk(s: &str) -> anyhow::Result<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_hashes_match_the_report_functions() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let a = elf::load(&std::fs::read(dir.join("demo_vault_v1.so")).unwrap()).unwrap();
+        let b = elf::load(&std::fs::read(dir.join("demo_vault_v2.so")).unwrap()).unwrap();
+        let r = diff::compare(&a, &b);
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(
+            checked_hashes(&v),
+            Some((verdict_hash(&r), report_hash(&r)))
+        );
+        let mut lied = v.clone();
+        lied["risk"] = "info".into();
+        assert_eq!(checked_hashes(&lied), None);
+    }
 
     #[test]
     fn hash_parsing_rejects_bad_input_without_panicking() {

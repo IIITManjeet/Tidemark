@@ -20,10 +20,12 @@ pub fn get(dir: &Path, old_sha: &str, new_sha: &str) -> Option<Value> {
     let v: Value =
         serde_json::from_slice(&std::fs::read(path(dir, old_sha, new_sha)).ok()?).ok()?;
     let r = &v["report"];
+    let (verdict, report) = crate::checked_hashes(r)?;
     let fits = r["rules_version"] == RULES_VERSION
         && r["old"]["sha256"] == old_sha
         && r["new"]["sha256"] == new_sha
-        && v["verdict_hash"].is_string();
+        && v["verdict_hash"] == verdict.as_str()
+        && v["report_hash"] == report.as_str();
     fits.then_some(v)
 }
 
@@ -83,6 +85,27 @@ mod tests {
         .unwrap();
         assert!(get(&d, &oa, &ob).is_none());
         std::fs::write(path(&d, &oa, &ob), b"{not json").unwrap();
+        assert!(get(&d, &oa, &ob).is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn edited_entries_are_misses() {
+        let d = tmp("edit");
+        let (a, b) = (fixture("demo_vault_v1.so"), fixture("demo_vault_v2.so"));
+        let (oa, ob) = (elf::sha256_hex(&a), elf::sha256_hex(&b));
+        let r = crate::diff::compare(&elf::load(&a).unwrap(), &elf::load(&b).unwrap());
+        let mut e = entry(&r);
+        e["report"]["risk"] = "info".into();
+        put(&d, &oa, &ob, &e).unwrap();
+        assert!(get(&d, &oa, &ob).is_none());
+        let mut e = entry(&r);
+        e["report"]["findings"] = json!([]);
+        put(&d, &oa, &ob, &e).unwrap();
+        assert!(get(&d, &oa, &ob).is_none());
+        let mut e = entry(&r);
+        e["verdict_hash"] = "0".repeat(64).into();
+        put(&d, &oa, &ob, &e).unwrap();
         assert!(get(&d, &oa, &ob).is_none());
         let _ = std::fs::remove_dir_all(&d);
     }

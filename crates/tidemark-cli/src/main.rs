@@ -389,7 +389,7 @@ fn main() -> Result<()> {
                 std::fs::write(&p, serde_json::to_string_pretty(r)?)?;
                 out!("JSON report written to {}", p.display());
             }
-            if Severity::parse(r["risk"].as_str().unwrap_or("info"))? >= gate {
+            if Severity::parse(r["risk"].as_str().context("report has no risk")?)? >= gate {
                 std::process::exit(2);
             }
         }
