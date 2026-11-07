@@ -318,6 +318,24 @@ accounts with `fetch`, so the browser never trusts an indexer.
 `scripts/build-wasm.sh` builds the release `.wasm` and runs
 `wasm-bindgen --target web` into `npm/dist/`.
 
-## 9. Planned interfaces
+## 9. Census (`census.rs`)
+
+`classify(authority, authority_owner)`:
+
+| Condition | Result |
+|---|---|
+| no upgrade authority | `Immutable` |
+| authority account owned by Squads v4/v3 | `Multisig` |
+| owned by SPL Governance | `Governance` |
+| authority on the ed25519 curve | `SingleKey` |
+| otherwise (a PDA) | `ProgramControlled` with the owner if it isn't the System Program |
+
+`survey(rpc, program)` reads the program owner (a program not owned by the
+upgradeable loader is immutable), fetches ProgramData through `rpc::fetch`,
+checks the ELF for `security.txt`, and looks up the authority account's
+owner with a zero-length `dataSlice`. Errors are recorded per program so one
+bad id doesn't stop the run.
+
+## 10. Planned interfaces
 
 - `POST /v1/review {old, new}` returns the report and its hash, backed by the cache.

@@ -187,10 +187,26 @@ When an upgrade proposal is created, Tidemark diffs the proposal's buffer
 against the live program and posts the report to signers during the timelock
 window, so nobody approves bytecode they haven't seen.
 
-### 11. Upgrade-authority census · Roadmap
-A public dashboard that classifies every upgradeable program by who controls
-it: single key, multisig (threshold and timelock read on-chain), governance, or
-immutable. It joins this with verified-build and `security.txt` status.
+### 11. Upgrade-authority census · Shipped (CLI)
+`tidemark census <program ids…>` (or `--file`) classifies who can upgrade each
+program and whether it embeds a `security.txt`:
+- **immutable**: no upgrade authority, or not owned by the upgradeable loader
+- **single key**: the authority is an ordinary ed25519 key
+- **multisig / governance**: the authority account is owned by Squads v3/v4
+  or SPL Governance
+- **program-controlled (PDA)**: the authority is off the ed25519 curve, so no
+  private key exists and only a program can sign. Squads v4 vaults show up
+  this way, since a vault PDA is a plain system account.
+
+```
+$ tidemark census --rpc https://api.mainnet-beta.solana.com JUP6Lkb… whirLbM… MarBmsS…
+JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4   program-controlled (PDA)   no
+whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc   program-controlled (PDA)   no
+MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD   program-controlled (PDA)   yes
+```
+
+Reading multisig thresholds and timelocks, verified-build status and a public
+dashboard are still on the roadmap.
 
 ### 12. MEV transparency layer · Roadmap
 A slot scanner detects sandwich patterns (buy → victim → sell on one pool in
@@ -313,6 +329,7 @@ cargo run -p tidemark-cli -- verify-ledger --program <LEDGER_PROGRAM_ID> --regis
 
 # inspect any deployed program
 cargo run -p tidemark-cli -- fetch <PROGRAM_ID> -o program.so
+cargo run -p tidemark-cli -- census <PROGRAM_ID>...      # who can upgrade these programs?
 ```
 
 ### Commands
