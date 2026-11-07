@@ -182,66 +182,105 @@ fn handler_discriminators(p: &Program) -> Vec<u64> {
     handler_names(p).into_iter().map(|(_, d)| d).collect()
 }
 
-fn high_entropy(v: u64) -> bool {
-    let distinct = v.to_le_bytes().iter().collect::<BTreeSet<_>>().len();
-    distinct >= 6 && (v >> 32) > 0x10
+const KEY_DISTINCT: usize = 20;
+
+fn key_like(k: &[u8; 32]) -> bool {
+    k.iter().collect::<BTreeSet<_>>().len() >= KEY_DISTINCT
 }
 
-fn inline_keys(old: &Program, new: &Program, skip: &BTreeSet<u64>) -> Vec<[u8; 32]> {
-    let seen: BTreeSet<u64> = old.wide.iter().map(|w| w.value).collect();
-    let fresh: Vec<&WideLoad> = new
+fn assembled_keys(p: &Program, skip: &BTreeSet<u64>) -> BTreeSet<[u8; 32]> {
+    let cands: Vec<&WideLoad> = p
         .wide
         .iter()
-        .filter(|w| {
-            w.slot.is_some()
-                && high_entropy(w.value)
-                && !seen.contains(&w.value)
-                && !skip.contains(&w.value)
-        })
+        .filter(|w| w.slot.is_some() && w.value != 0 && !skip.contains(&w.value))
         .collect();
-    let mut by_slot: HashMap<(u8, i16), Vec<usize>> = HashMap::new();
-    for (i, w) in fresh.iter().enumerate() {
-        by_slot
-            .entry(w.slot.expect("filtered"))
-            .or_default()
-            .push(i);
+    let slot = |w: &WideLoad| {
+        let (base, off) = w.slot.expect("filtered");
+        (w.cmp, base, off)
+    };
+    let mut by_slot: HashMap<(bool, u8, i16), Vec<usize>> = HashMap::new();
+    for (i, w) in cands.iter().enumerate() {
+        by_slot.entry(slot(w)).or_default().push(i);
     }
-    let mut used = vec![false; fresh.len()];
-    let mut keys = Vec::new();
-    for (a, w) in fresh.iter().enumerate() {
+    let mut used = vec![false; cands.len()];
+    let mut keys = BTreeSet::new();
+    for (a, w) in cands.iter().enumerate() {
         if used[a] {
             continue;
         }
-        let (base, off) = w.slot.expect("filtered");
+        let (cmp, base, off) = slot(w);
         let mut parts = vec![a];
         for step in 1..4i16 {
             let Some(want_off) = off.checked_add(8 * step) else {
                 break;
             };
-            let Some(cands) = by_slot.get(&(base, want_off)) else {
+            let Some(list) = by_slot.get(&(cmp, base, want_off)) else {
                 break;
             };
             let lo = w.pc.saturating_sub(KEY_PC_WINDOW);
-            let first = cands.partition_point(|&i| fresh[i].pc < lo);
-            let hit = cands[first..]
+            let first = list.partition_point(|&i| cands[i].pc < lo);
+            let hit = list[first..]
                 .iter()
-                .take_while(|&&i| fresh[i].pc <= w.pc + KEY_PC_WINDOW)
+                .take_while(|&&i| cands[i].pc <= w.pc + KEY_PC_WINDOW)
                 .find(|&&i| !used[i] && i != a);
             match hit {
                 Some(&b) => parts.push(b),
                 None => break,
             }
         }
-        if parts.len() == 4 {
-            let mut k = [0u8; 32];
-            for (j, idx) in parts.iter().enumerate() {
-                used[*idx] = true;
-                k[j * 8..j * 8 + 8].copy_from_slice(&fresh[*idx].value.to_le_bytes());
+        if parts.len() < 4 {
+            continue;
+        }
+        let mut k = [0u8; 32];
+        for (j, idx) in parts.iter().enumerate() {
+            k[j * 8..j * 8 + 8].copy_from_slice(&cands[*idx].value.to_le_bytes());
+        }
+        if key_like(&k) {
+            for idx in parts {
+                used[idx] = true;
             }
-            keys.push(k);
+            keys.insert(k);
         }
     }
     keys
+}
+
+const MAX_BLOB_WINDOWS: usize = 4096;
+
+fn rodata_keys(windows: Vec<[u8; 32]>) -> (Vec<String>, usize) {
+    let windows: Vec<[u8; 32]> = windows.into_iter().take(MAX_BLOB_WINDOWS).collect();
+    let by_prefix: HashMap<&[u8], usize> = windows
+        .iter()
+        .enumerate()
+        .map(|(i, w)| (&w[..31], i))
+        .collect();
+    let suffixes: std::collections::HashSet<&[u8]> = windows.iter().map(|w| &w[1..]).collect();
+    let mut out = Vec::new();
+    let mut total = 0;
+    for w in &windows {
+        if suffixes.contains(&w[..31]) {
+            continue;
+        }
+        total += 1;
+        if out.len() >= MAX_DETAIL {
+            continue;
+        }
+        let mut len = 32;
+        let mut cur = w;
+        while let Some(&n) = by_prefix.get(&cur[1..]) {
+            if len >= 32 + windows.len() {
+                break;
+            }
+            cur = &windows[n];
+            len += 1;
+        }
+        if len == 32 {
+            out.push(name_key(w));
+        } else {
+            out.push(format!("{} (start of a {len}-byte blob)", name_key(w)));
+        }
+    }
+    (out, total)
 }
 
 fn const_findings(old: &Program, new: &Program, findings: &mut Vec<Finding>) {
@@ -455,8 +494,14 @@ fn retarget_findings(
 }
 
 fn is_known(k: &[u8; 32]) -> bool {
-    let b58 = bs58::encode(k).into_string();
-    KNOWN.iter().any(|(id, _)| *id == b58)
+    static IDS: std::sync::OnceLock<BTreeSet<[u8; 32]>> = std::sync::OnceLock::new();
+    IDS.get_or_init(|| {
+        KNOWN
+            .iter()
+            .filter_map(|(id, _)| bs58::decode(id).into_vec().ok()?.try_into().ok())
+            .collect()
+    })
+    .contains(k)
 }
 
 pub fn compare(old: &Program, new: &Program) -> Report {
@@ -515,29 +560,43 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         });
     }
 
-    let mut new_keys: Vec<[u8; 32]> = new.consts32.difference(&old.consts32).copied().collect();
-    let skip: BTreeSet<u64> = handler_discriminators(new).into_iter().collect();
-    for k in inline_keys(old, new, &skip) {
-        if !new_keys.contains(&k) {
-            new_keys.push(k);
-        }
-    }
-    let unknown: Vec<String> = new_keys
-        .iter()
-        .filter(|k| !is_known(k))
-        .take(12)
-        .map(name_key)
+    let skip: BTreeSet<u64> = handler_discriminators(old)
+        .into_iter()
+        .chain(handler_discriminators(new))
         .collect();
-    let known: Vec<String> = new_keys
+    let mut before = assembled_keys(old, &skip);
+    before.extend(old.consts32.iter().copied());
+    let fresh_inline: Vec<[u8; 32]> = assembled_keys(new, &skip)
+        .difference(&before)
+        .copied()
+        .collect();
+    let fresh_rodata: Vec<[u8; 32]> = new
+        .consts32
+        .difference(&before)
+        .filter(|k| !fresh_inline.contains(k))
+        .copied()
+        .collect();
+    let known: Vec<String> = fresh_inline
         .iter()
+        .chain(&fresh_rodata)
         .filter(|k| is_known(k))
         .map(name_key)
         .collect();
+    let mut unknown: Vec<String> = fresh_inline
+        .iter()
+        .filter(|k| !is_known(k))
+        .map(name_key)
+        .collect();
+    let (blobs, blob_count) =
+        rodata_keys(fresh_rodata.into_iter().filter(|k| !is_known(k)).collect());
+    let total = unknown.len() + blob_count;
+    unknown.extend(blobs);
+    unknown.truncate(MAX_DETAIL);
     if !unknown.is_empty() {
         findings.push(Finding {
             id: "TM-KEY-ADD",
             severity: Severity::High,
-            title: format!("{} new hardcoded key(s)", unknown.len()),
+            title: format!("{total} new hardcoded key(s)"),
             detail: unknown,
         });
     }
