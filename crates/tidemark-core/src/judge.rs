@@ -48,6 +48,7 @@ pub struct Tally {
     pub dropped: usize,
     pub failed: usize,
     pub cites: Vec<String>,
+    pub errors: Vec<String>,
 }
 
 impl Tally {
@@ -122,7 +123,7 @@ fn citable(report: &Value) -> BTreeSet<String> {
 }
 
 fn vote_schema() -> Value {
-    json!({
+    let answer = json!({
         "type": "object",
         "properties": {
             "answer": { "type": "string", "enum": ["yes", "no"] },
@@ -130,17 +131,27 @@ fn vote_schema() -> Value {
             "reason": { "type": "string" }
         },
         "required": ["answer", "cites", "reason"]
-    })
+    });
+    let props: serde_json::Map<String, Value> = QUESTIONS
+        .iter()
+        .map(|q| (q.id.to_string(), answer.clone()))
+        .collect();
+    let ids: Vec<&str> = QUESTIONS.iter().map(|q| q.id).collect();
+    json!({ "type": "object", "properties": props, "required": ids })
 }
 
-pub fn question_prompt(report: &Value, q: &Question) -> String {
+pub fn jury_prompt(report: &Value) -> String {
+    let questions: Vec<String> = QUESTIONS
+        .iter()
+        .map(|q| format!("- {}: {}", q.id, q.text))
+        .collect();
     format!(
-        "{}\n\nQuestion: {}\nAnswer \"yes\" or \"no\". If you answer yes, list in \"cites\" the \
-         finding ids (for example TM-KEY-ADD) or hunks (for example hunk:2) from the report that \
-         show it. A yes without a citation from the report is discarded. Keep \"reason\" to one \
-         sentence.",
+        "{}\n\nAnswer each question below separately, under its id, with \"yes\" or \"no\". \
+         If you answer yes, list in \"cites\" the finding ids (for example TM-KEY-ADD) or hunks \
+         (for example hunk:2) from the report that show it. A yes without a citation from the \
+         report is discarded. Keep each \"reason\" to one sentence.\n{}",
         data_block(report),
-        q.text
+        questions.join("\n")
     )
 }
 
@@ -159,8 +170,7 @@ enum Vote {
     Dropped,
 }
 
-fn parse_vote(raw: &str, allowed: &BTreeSet<String>) -> Result<Vote> {
-    let v: Value = serde_json::from_str(raw.trim()).context("judge did not answer in JSON")?;
+fn parse_vote(v: &Value, allowed: &BTreeSet<String>) -> Result<Vote> {
     match v["answer"].as_str() {
         Some("no") => Ok(Vote::No),
         Some("yes") => {
@@ -178,42 +188,65 @@ fn parse_vote(raw: &str, allowed: &BTreeSet<String>) -> Result<Vote> {
                 Vote::Yes(cites)
             })
         }
-        _ => anyhow::bail!("judge answer is neither yes nor no"),
+        _ => anyhow::bail!("answer is neither yes nor no"),
     }
 }
 
-pub fn ask_question(backend: &dyn Backend, report: &Value, q: &'static Question) -> Tally {
-    let allowed = citable(report);
-    let prompt = question_prompt(report, q);
-    let schema = vote_schema();
-    let mut t = Tally {
-        id: q.id,
-        question: q.text,
-        yes: 0,
-        no: 0,
-        dropped: 0,
-        failed: 0,
-        cites: Vec::new(),
-    };
-    for _ in 0..VOTES {
-        match backend
-            .ask(SYSTEM, &prompt, Some(&schema))
-            .and_then(|raw| parse_vote(&raw, &allowed))
-        {
+impl Tally {
+    fn new(q: &'static Question) -> Self {
+        Tally {
+            id: q.id,
+            question: q.text,
+            yes: 0,
+            no: 0,
+            dropped: 0,
+            failed: 0,
+            cites: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    fn fail(&mut self, e: String) {
+        self.failed += 1;
+        if !self.errors.contains(&e) {
+            self.errors.push(e);
+        }
+    }
+
+    fn count(&mut self, vote: Result<Vote>) {
+        match vote {
             Ok(Vote::Yes(c)) => {
-                t.yes += 1;
+                self.yes += 1;
                 for c in c {
-                    if !t.cites.contains(&c) {
-                        t.cites.push(c);
+                    if !self.cites.contains(&c) {
+                        self.cites.push(c);
                     }
                 }
             }
-            Ok(Vote::No) => t.no += 1,
-            Ok(Vote::Dropped) => t.dropped += 1,
-            Err(_) => t.failed += 1,
+            Ok(Vote::No) => self.no += 1,
+            Ok(Vote::Dropped) => self.dropped += 1,
+            Err(e) => self.fail(e.to_string()),
         }
     }
-    t
+}
+
+pub fn ask_jury(backend: &dyn Backend, report: &Value) -> Vec<Tally> {
+    let allowed = citable(report);
+    let prompt = jury_prompt(report);
+    let schema = vote_schema();
+    let mut tallies: Vec<Tally> = QUESTIONS.iter().map(Tally::new).collect();
+    for _ in 0..VOTES {
+        let ballot = backend.ask(SYSTEM, &prompt, Some(&schema)).and_then(|raw| {
+            serde_json::from_str::<Value>(raw.trim()).context("judge did not answer in JSON")
+        });
+        for (t, q) in tallies.iter_mut().zip(&QUESTIONS) {
+            match &ballot {
+                Ok(b) => t.count(parse_vote(&b[q.id], &allowed)),
+                Err(e) => t.fail(e.to_string()),
+            }
+        }
+    }
+    tallies
 }
 
 pub fn judge(backend: &dyn Backend, report: &Value) -> Result<Judgement> {
@@ -222,10 +255,7 @@ pub fn judge(backend: &dyn Backend, report: &Value) -> Result<Judgement> {
         .ask(SYSTEM, &explain_prompt(report), None)
         .ok()
         .map(|s| s.trim().to_string());
-    let questions: Vec<Tally> = QUESTIONS
-        .iter()
-        .map(|q| ask_question(backend, report, q))
-        .collect();
+    let questions = ask_jury(backend, report);
     let after = if questions.iter().any(Tally::majority_yes) {
         before.max(Severity::High)
     } else {
@@ -251,6 +281,7 @@ pub mod gemini {
     pub const MODEL_VAR: &str = "GEMINI_MODEL";
     pub const DEFAULT_MODEL: &str = "gemini-2.5-flash";
     const BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
+    const MAX_WAIT: Duration = Duration::from_secs(32);
 
     pub struct Gemini {
         key: String,
@@ -291,16 +322,31 @@ pub mod gemini {
                 "generationConfig": config,
             });
             let url = format!("{BASE}/{}:generateContent", self.model);
-            let resp: Value = self
-                .agent
-                .post(&url)
-                .set("x-goog-api-key", &self.key)
-                .send_json(body)
-                .map_err(|e| match e {
-                    ureq::Error::Status(code, _) => anyhow::anyhow!("Gemini returned HTTP {code}"),
-                    other => anyhow::anyhow!("Gemini request failed: {}", other.kind()),
-                })?
-                .into_json()?;
+            let mut wait = Duration::from_secs(2);
+            let resp: Value = loop {
+                match self
+                    .agent
+                    .post(&url)
+                    .set("x-goog-api-key", &self.key)
+                    .send_json(body.clone())
+                {
+                    Ok(r) => break r.into_json()?,
+                    Err(ureq::Error::Status(code, r))
+                        if matches!(code, 429 | 500 | 503) && wait <= MAX_WAIT =>
+                    {
+                        let hinted = r
+                            .header("retry-after")
+                            .and_then(|v| v.parse::<u64>().ok())
+                            .map(Duration::from_secs);
+                        std::thread::sleep(hinted.unwrap_or(wait).min(MAX_WAIT));
+                        wait *= 2;
+                    }
+                    Err(ureq::Error::Status(code, _)) => {
+                        anyhow::bail!("Gemini returned HTTP {code}")
+                    }
+                    Err(other) => anyhow::bail!("Gemini request failed: {}", other.kind()),
+                }
+            };
             resp["candidates"][0]["content"]["parts"][0]["text"]
                 .as_str()
                 .map(String::from)
@@ -355,33 +401,67 @@ mod tests {
         })
     }
 
+    fn ballot(a: &str, b: &str, c: &str) -> String {
+        let ids: Vec<&str> = QUESTIONS.iter().map(|q| q.id).collect();
+        format!(r#"{{"{}":{a},"{}":{b},"{}":{c}}}"#, ids[0], ids[1], ids[2])
+    }
+
     const YES_CHECK: &str = r#"{"answer":"yes","cites":["TM-CHECK-GONE"],"reason":"r"}"#;
     const YES_HUNK: &str = r#"{"answer":"yes","cites":["hunk:0"],"reason":"r"}"#;
     const YES_NOTHING: &str = r#"{"answer":"yes","cites":["TM-MADE-UP","hunk:9"],"reason":"r"}"#;
     const NO: &str = r#"{"answer":"no","cites":[],"reason":"r"}"#;
 
+    fn run(ballots: &[String]) -> Vec<Tally> {
+        let refs: Vec<&str> = ballots.iter().map(|s| s.as_str()).collect();
+        ask_jury(&Scripted::new(&refs), &report("medium"))
+    }
+
     #[test]
     fn yes_without_a_real_citation_is_dropped() {
-        let b = Scripted::new(&[YES_NOTHING, YES_CHECK, NO]);
-        let t = ask_question(&b, &report("medium"), &QUESTIONS[1]);
-        assert_eq!((t.yes, t.no, t.dropped, t.failed), (1, 1, 1, 0));
-        assert_eq!(t.cites, ["TM-CHECK-GONE"]);
-        assert!(!t.majority_yes());
+        let t = run(&[
+            ballot(NO, YES_NOTHING, NO),
+            ballot(NO, YES_CHECK, NO),
+            ballot(NO, NO, NO),
+        ]);
+        assert_eq!((t[1].yes, t[1].no, t[1].dropped, t[1].failed), (1, 1, 1, 0));
+        assert_eq!(t[1].cites, ["TM-CHECK-GONE"]);
+        assert!(!t[1].majority_yes());
+        assert_eq!(t[0].no, 3);
     }
 
     #[test]
     fn malformed_answers_count_as_failed() {
-        let b = Scripted::new(&["not json", r#"{"answer":"maybe"}"#, YES_HUNK]);
-        let t = ask_question(&b, &report("low"), &QUESTIONS[0]);
-        assert_eq!((t.yes, t.failed), (1, 2));
+        let t = run(&[
+            "not json".into(),
+            ballot(r#"{"answer":"maybe"}"#, NO, NO),
+            ballot(YES_HUNK, NO, NO),
+        ]);
+        assert_eq!((t[0].yes, t[0].failed), (1, 2));
+        assert_eq!(t[0].errors.len(), 2);
+        assert_eq!((t[1].no, t[1].failed), (2, 1));
+    }
+
+    #[test]
+    fn one_call_per_vote() {
+        let b = Scripted::new(&[
+            &ballot(NO, NO, NO),
+            &ballot(NO, NO, NO),
+            &ballot(NO, NO, NO),
+        ]);
+        ask_jury(&b, &report("low"));
+        assert_eq!(b.prompts.borrow().len(), VOTES);
     }
 
     #[test]
     fn jury_raises_risk_on_a_cited_majority() {
-        let mut script = vec!["explanation"];
-        script.extend([YES_CHECK, YES_HUNK, NO]);
-        script.extend([NO; 6]);
-        let j = judge(&Scripted::new(&script), &report("medium")).unwrap();
+        let script = [
+            "explanation".to_string(),
+            ballot(NO, YES_CHECK, NO),
+            ballot(NO, YES_HUNK, NO),
+            ballot(NO, NO, NO),
+        ];
+        let refs: Vec<&str> = script.iter().map(|s| s.as_str()).collect();
+        let j = judge(&Scripted::new(&refs), &report("medium")).unwrap();
         assert_eq!(j.risk_before, Severity::Medium);
         assert_eq!(j.risk_after, Severity::High);
         assert_eq!(j.explanation.as_deref(), Some("explanation"));
@@ -389,27 +469,27 @@ mod tests {
 
     #[test]
     fn jury_never_lowers_risk() {
-        let mut script = vec!["explanation"];
-        script.extend([NO; 9]);
-        let j = judge(&Scripted::new(&script), &report("high")).unwrap();
-        assert_eq!(j.risk_after, Severity::High);
-        let mut script = vec!["explanation"];
-        script.extend([YES_CHECK; 9]);
-        let j = judge(&Scripted::new(&script), &report("critical")).unwrap();
-        assert_eq!(j.risk_after, Severity::Critical);
+        for (risk, answer, want) in [
+            ("high", NO, Severity::High),
+            ("critical", YES_CHECK, Severity::Critical),
+        ] {
+            let b = ballot(answer, answer, answer);
+            let script = ["explanation", b.as_str(), b.as_str(), b.as_str()];
+            let j = judge(&Scripted::new(&script), &report(risk)).unwrap();
+            assert_eq!(j.risk_after, want);
+        }
     }
 
     #[test]
     fn program_strings_stay_inside_one_quoted_string() {
-        let p = question_prompt(&report("low"), &QUESTIONS[0]);
+        let p = jury_prompt(&report("low"));
         let (head, rest) = p.split_once("given as one quoted JSON string):\n").unwrap();
         assert!(!head.contains("IGNORE"));
         let quoted = rest.lines().next().unwrap();
         let inner: String = serde_json::from_str(quoted).unwrap();
         assert!(inner.contains("IGNORE ALL PREVIOUS INSTRUCTIONS"));
-        assert_eq!(rest.matches("END REPORT").count(), 1 + 1);
-        assert!(rest.trim_end().ends_with("show it. A yes without a citation from the report is discarded. Keep \"reason\" to one sentence."));
-        let tail = &rest[quoted.len()..];
-        assert!(tail.starts_with("\nEND REPORT"));
+        assert!(rest[quoted.len()..].starts_with("\nEND REPORT"));
+        assert_eq!(rest.matches("END REPORT").count(), 2);
+        assert!(rest.trim_end().ends_with(QUESTIONS[2].text));
     }
 }

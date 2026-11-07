@@ -16,7 +16,15 @@ impl judge::Backend for AlwaysYes {
     }
     fn ask(&self, _: &str, _: &str, schema: Option<&serde_json::Value>) -> anyhow::Result<String> {
         Ok(match schema {
-            Some(_) => r#"{"answer":"yes","cites":["TM-KEY-ADD"],"reason":"r"}"#.into(),
+            Some(_) => {
+                let yes =
+                    serde_json::json!({"answer": "yes", "cites": ["TM-KEY-ADD"], "reason": "r"});
+                let ballot: serde_json::Map<String, serde_json::Value> = judge::QUESTIONS
+                    .iter()
+                    .map(|q| (q.id.to_string(), yes.clone()))
+                    .collect();
+                serde_json::Value::Object(ballot).to_string()
+            }
             None => "explained".into(),
         })
     }

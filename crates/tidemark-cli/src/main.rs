@@ -327,11 +327,17 @@ AI judge ({}), advisory: not part of the verdict hash or any attestation",
             tidemark_core::judge::VOTES,
             t.question
         );
-        if t.dropped + t.failed > 0 {
+        if t.dropped > 0 {
             out!(
-                "             {} yes without a valid citation dropped, {} unreadable",
-                t.dropped,
-                t.failed
+                "             {} yes without a valid citation dropped",
+                t.dropped
+            );
+        }
+        if t.failed > 0 {
+            out!(
+                "             {} vote(s) failed: {}",
+                t.failed,
+                t.errors.join("; ")
             );
         }
     }
