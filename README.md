@@ -130,14 +130,16 @@ CI runs clippy with warnings as errors, the test suite, a live review of the
 demo upgrade, and the Kani proofs.
 
 ### 5. Typed, proof-checked Rust · Shipped
-- **Kani model-checking harnesses**, run in CI on every push and pull request:
-  the sBPF decoder on any input up to 32 bytes, the SBPF
-  version check for every header, the ELF length computation on any 192-byte
-  header, the loader's store, compare and dispatch scans over any 6
-  instructions, the `.rodata` key scan against a naive reference, the ledger
-  account parsers up to their fixed sizes, and the transaction length encoding
-  for every `u16`. Full ELF parsing (goblin) and the rules are covered by tests,
-  not proofs.
+- **Kani model-checking harnesses**, run in CI on every pull request and push
+  to `main`: each sBPF decoding step on any input up to 24 bytes, the ELF
+  length computation on any input up to 160 bytes, the loader's store, compare
+  and dispatch scans over any 6 instructions, and the transaction length
+  encoding for every `u16`. Harnesses for the ledger account parsers exist but
+  do not finish within CI limits yet, so they are not claimed. Rendering, the
+  SBPF version check and the `.rodata` scan are checked by exhaustive or
+  randomized tests instead, because string formatting and sets are too costly
+  for the model checker. Full ELF parsing (goblin) and the rules are covered by
+  tests, not proofs.
 - **Fuzz-style regression tests** for the inputs reviewers used to stall or crash
   the tool: oversized log names, tens of thousands of stack constants, very
   large unrelated programs, and malformed hashes in a report.

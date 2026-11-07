@@ -274,21 +274,24 @@ compiles it.
 
 ## 7. Proofs
 
-`cargo kani -p tidemark-core` checks these harnesses (CI job `proofs`, Kani
-0.68.0):
+The CI job `proofs` (Kani 0.68.0) runs the first four harnesses below; each
+verifies in under a minute on a 4 GB machine:
 
 | Harness | Property |
 |---|---|
-| `disasm::decode_is_total_and_in_bounds` | any ≤32-byte input decodes without panic; every instruction lies inside the input |
-| `elf::version_check_is_total` | `sbpf_version` accepts only EM_BPF/EM_SBPF and returns ≤ 3 |
+| `disasm::decode_step_stays_in_bounds` | one decoding step on any ≤24-byte input at any offset never panics, advances 8 or 16 bytes and stays inside the input; `decode` loops only while a step succeeds, so the whole buffer follows |
 | `elf::slot_scans_stay_in_bounds` | store, compare and dispatch scans never index out of bounds |
-| `elf::rodata_window_matches_naive_scan` | the sliding window agrees with a direct count on every window of a 34-byte input |
-| `rpc::elf_len_stays_in_bounds` | on any 192-byte header, a returned length is within the data |
-| `ledger::parse_*_never_panics` | account parsers on any prefix of their fixed size |
+| `rpc::elf_len_stays_in_bounds` | on any input up to 160 bytes, `elf_end` never panics and a returned length is within the data |
 | `submit::compact_u16_roundtrips` | length encoding round-trips for every `u16` |
+| `ledger::parse_*_never_panics` | account parsers on any prefix of their fixed size; **not in CI**, does not finish within 15 minutes because of `anyhow` error formatting |
 
 `elf_len` rejects section header entries that are not 64 bytes, which also
 keeps its loop bounded.
+
+Some properties are tested rather than proved, because string formatting and
+`BTreeSet` make CBMC run out of memory or time: `render` on every opcode with extreme
+operands, `sbpf_version` on the version table, and the `.rodata` sliding
+window against a naive count on 2,000 random inputs.
 
 ## 8. Planned interfaces
 
