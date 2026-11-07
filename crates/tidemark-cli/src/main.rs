@@ -326,7 +326,7 @@ fn watch_once(
     use tidemark_core::snapshots;
     let d = rpc::fetch(rpc_url, program)?;
     let slot = d.last_deploy_slot;
-    if snapshots::path_for(dir, program, slot).exists() {
+    if snapshots::path_for(dir, program, slot)?.exists() {
         return Ok(());
     }
     let Some(prev) = snapshots::previous(dir, program, slot)? else {
@@ -335,7 +335,7 @@ fn watch_once(
         return Ok(());
     };
     out!("{program}: upgraded, slot {prev} -> {slot}\n");
-    let old = elf::load(&read(&snapshots::path_for(dir, program, prev))?)?;
+    let old = elf::load(&read(&snapshots::path_for(dir, program, prev)?)?)?;
     let new = elf::load(&d.elf)?;
     let r = diff::compare(&old, &new);
     print_report(&r, 0);
