@@ -83,7 +83,7 @@ Deterministic, versioned rules (`tm-rules-0.6`) turn a diff into ranked findings
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
 | `TM-PARTIAL` | Analysis hit a time or size limit, so findings may be missing |
-| `TM-VERSION-CHANGE` | The SBPF version changed, so the program was rebuilt for a new target; layout-sensitive findings are capped at Medium |
+| `TM-VERSION-CHANGE` | The SBPF version changed, so the program was rebuilt for a new target; retargets, guards and rodata keys may be recompilation noise, but keep their severity because the version field alone is easy to change |
 
 Well-known program ids (System, Token, Token-2022, ATA, …) are recognised and
 named, so a new reference to Token isn't mistaken for a planted key.

@@ -122,7 +122,7 @@ absolute branch or internal-call target and the constant, if any.
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
 | TM-PARTIAL | diff deadline hit, `.rodata` window cap reached, or handler walk out of budget | Medium |
-| TM-VERSION-CHANGE | old and new SBPF versions differ; TM-BRANCH-RETARGET, TM-CALL-RETARGET and TM-GUARD-GONE are capped at Medium, and TM-KEY-ADD too unless a key was rebuilt from instructions | Medium |
+| TM-VERSION-CHANGE | old and new SBPF versions differ; nothing is downgraded, because flipping the header flag alone (v0 to v1 decode identically) must not lower a finding | Medium |
 
 **Key recovery.** Compiled Rust rarely keeps a `Pubkey` constant as 32
 contiguous bytes. It loads it as four 64-bit `lddw` immediates and either

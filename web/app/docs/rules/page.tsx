@@ -24,7 +24,7 @@ const RULES: [string, string, string][] = [
   ["TM-SECTXT", "Medium / Low", "security.txt removed (Medium) or changed (Low)"],
   ["TM-CHURN", "Medium", "Over a quarter of the program changed; small changes can hide in big diffs"],
   ["TM-PARTIAL", "Medium", "A time or size limit cut the analysis short, so findings may be missing"],
-  ["TM-VERSION-CHANGE", "Medium", "The SBPF version changed; layout-sensitive rules are capped at Medium"],
+  ["TM-VERSION-CHANGE", "Medium", "The SBPF version changed; other findings may be recompilation noise but keep their severity"],
   ["TM-PROG-REF", "Low", "New references to well-known programs such as Token or System"],
   ["TM-CONST-ADD", "Low", "New 64-bit constants"],
 ];
