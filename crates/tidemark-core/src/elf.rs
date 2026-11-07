@@ -13,6 +13,7 @@ pub struct WideLoad {
     pub pc: usize,
     pub value: u64,
     pub slot: Option<(u8, i16)>,
+    pub cmp: bool,
 }
 
 pub struct Program {
@@ -140,6 +141,7 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
                 pc: i.pc,
                 value: i.imm as u64,
                 slot: None,
+                cmp: false,
             });
         }
         let mut sc: Option<String> = None;
@@ -183,15 +185,11 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     let by_pc: HashMap<usize, usize> = insns.iter().enumerate().map(|(n, i)| (i.pc, n)).collect();
     for w in wide.iter_mut() {
         let Some(&n) = by_pc.get(&w.pc) else { continue };
-        let reg = insns[n].dst;
-        for j in insns.iter().skip(n + 1).take(8) {
-            if j.op == 0x7b && j.src == reg {
-                w.slot = Some((j.dst, j.off));
-                break;
-            }
-            if j.dst == reg && j.op != 0x7b {
-                break;
-            }
+        if let Some(slot) = stored_to(&insns, n) {
+            w.slot = Some(slot);
+        } else if let Some(slot) = compared_with(&insns, n) {
+            w.slot = Some(slot);
+            w.cmp = true;
         }
     }
 
@@ -232,6 +230,47 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     })
 }
 
+const SLOT_SCAN: usize = 32;
+
+fn writes(i: &disasm::Insn, reg: u8) -> bool {
+    match i.op & 7 {
+        0 | 1 | 4 | 7 => i.dst == reg,
+        5 => matches!(i.op, 0x85 | 0x8d) && reg <= 5,
+        _ => false,
+    }
+}
+
+fn stored_to(insns: &[disasm::Insn], n: usize) -> Option<(u8, i16)> {
+    let reg = insns[n].dst;
+    for j in insns.iter().skip(n + 1).take(SLOT_SCAN) {
+        if j.op == 0x7b && j.src == reg {
+            return Some((j.dst, j.off));
+        }
+        if writes(j, reg) {
+            return None;
+        }
+    }
+    None
+}
+
+fn compared_with(insns: &[disasm::Insn], n: usize) -> Option<(u8, i16)> {
+    let reg = insns[n].dst;
+    for k in n + 1..insns.len().min(n + 1 + SLOT_SCAN) {
+        let j = &insns[k];
+        if matches!(j.op, 0x1d | 0x5d) && (j.dst == reg || j.src == reg) {
+            let other = if j.dst == reg { j.src } else { j.dst };
+            let lo = k.saturating_sub(SLOT_SCAN);
+            let m = (lo..k).rev().find(|&m| writes(&insns[m], other))?;
+            let l = &insns[m];
+            return (l.op == 0x79).then_some((l.src, l.off));
+        }
+        if writes(j, reg) {
+            return None;
+        }
+    }
+    None
+}
+
 fn extract_strings(data: &[u8], out: &mut BTreeSet<String>) {
     let mut cur = Vec::new();
     let flush = |cur: &mut Vec<u8>, out: &mut BTreeSet<String>| {
@@ -251,16 +290,101 @@ fn extract_strings(data: &[u8], out: &mut BTreeSet<String>) {
 }
 
 fn extract_consts(data: &[u8], out: &mut BTreeSet<[u8; 32]>) {
-    let mut i = 0;
-    while i + 32 <= data.len() {
-        let w = &data[i..i + 32];
-        let distinct = w.iter().collect::<BTreeSet<_>>().len();
-        let printable = w.iter().filter(|b| (0x20..0x7f).contains(*b)).count();
+    if data.len() < 32 {
+        return;
+    }
+    let mut counts = [0u8; 256];
+    let (mut distinct, mut printable) = (0usize, 0usize);
+    let mut add = |b: u8, d: i8, distinct: &mut usize, printable: &mut usize| {
+        let c = &mut counts[b as usize];
+        if d > 0 {
+            *distinct += (*c == 0) as usize;
+            *c += 1;
+        } else {
+            *c -= 1;
+            *distinct -= (*c == 0) as usize;
+        }
+        if (0x20..0x7f).contains(&b) {
+            *printable = (*printable as isize + d as isize) as usize;
+        }
+    };
+    for &b in &data[..32] {
+        add(b, 1, &mut distinct, &mut printable);
+    }
+    for i in 0..=data.len() - 32 {
+        if i > 0 {
+            add(data[i - 1], -1, &mut distinct, &mut printable);
+            add(data[i + 31], 1, &mut distinct, &mut printable);
+        }
         if distinct >= 24 && printable < 28 {
             let mut k = [0u8; 32];
-            k.copy_from_slice(w);
+            k.copy_from_slice(&data[i..i + 32]);
             out.insert(k);
         }
-        i += 8;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ins(op: u8, dst: u8, src: u8, off: i16, imm: i32) -> [u8; 8] {
+        let mut b = [0u8; 8];
+        b[0] = op;
+        b[1] = dst | (src << 4);
+        b[2..4].copy_from_slice(&off.to_le_bytes());
+        b[4..].copy_from_slice(&imm.to_le_bytes());
+        b
+    }
+
+    fn lddw(dst: u8, v: u64) -> Vec<u8> {
+        let mut b = ins(0x18, dst, 0, 0, v as u32 as i32).to_vec();
+        b.extend(ins(0, 0, 0, 0, (v >> 32) as u32 as i32));
+        b
+    }
+
+    fn code(parts: &[Vec<u8>]) -> Vec<disasm::Insn> {
+        disasm::decode(&parts.concat())
+    }
+
+    #[test]
+    fn store_far_from_its_lddw_is_found() {
+        let mut parts = vec![lddw(3, 0x1122_3344_5566_7788)];
+        for _ in 0..20 {
+            parts.push(ins(0xbf, 4, 5, 0, 0).to_vec());
+        }
+        parts.push(ins(0x7b, 10, 3, -40, 0).to_vec());
+        assert_eq!(stored_to(&code(&parts), 0), Some((10, -40)));
+    }
+
+    #[test]
+    fn overwritten_register_is_not_a_store() {
+        let parts = vec![
+            lddw(3, 0x1122_3344_5566_7788),
+            ins(0xb7, 3, 0, 0, 1).to_vec(),
+            ins(0x7b, 10, 3, -40, 0).to_vec(),
+        ];
+        assert_eq!(stored_to(&code(&parts), 0), None);
+    }
+
+    #[test]
+    fn compared_limb_takes_the_loaded_slot() {
+        let parts = vec![
+            ins(0x79, 0, 2, 16, 0).to_vec(),
+            lddw(7, 0x1122_3344_5566_7788),
+            ins(0x5d, 0, 7, 9, 0).to_vec(),
+        ];
+        assert_eq!(compared_with(&code(&parts), 1), Some((2, 16)));
+    }
+
+    #[test]
+    fn rodata_key_at_odd_offset_is_found() {
+        let key: [u8; 32] = std::array::from_fn(|i| (i as u8).wrapping_mul(37) ^ 0xa5);
+        let mut data = b"abc".to_vec();
+        data.extend_from_slice(&key);
+        data.extend_from_slice(b"xyz");
+        let mut out = BTreeSet::new();
+        extract_consts(&data, &mut out);
+        assert!(out.contains(&key));
     }
 }
