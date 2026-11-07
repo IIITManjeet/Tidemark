@@ -162,13 +162,18 @@ fn check_findings(
                 }
             }
         }
-    } else {
-        for (code, name) in ANCHOR_CHECKS {
-            let o = old.imm_counts.get(code).copied().unwrap_or(0);
-            let n = new.imm_counts.get(code).copied().unwrap_or(0);
-            if n < o {
-                anchor.push(format!("{name} ({code}): {o} → {n} check sites"));
-            }
+    }
+    for (code, name) in ANCHOR_CHECKS {
+        let o = old.imm_counts.get(code).copied().unwrap_or(0);
+        let n = new.imm_counts.get(code).copied().unwrap_or(0);
+        let tag = format!("({code})");
+        if n < o && !anchor.iter().any(|l| l.contains(&tag)) {
+            let scope = if per_handler {
+                "outside any handler: "
+            } else {
+                ""
+            };
+            anchor.push(format!("{scope}{name} ({code}): {o} → {n} check sites"));
         }
     }
     for (id, sev, title, detail) in [
@@ -224,6 +229,7 @@ fn assembled_keys(p: &Program, skip: &BTreeSet<u64>) -> BTreeSet<[u8; 32]> {
         }
         let (cmp, base, off) = slot(w);
         let mut parts = vec![a];
+        let mut at = w.pc;
         for step in 1..4i16 {
             let Some(want_off) = off.checked_add(8 * step) else {
                 break;
@@ -231,14 +237,17 @@ fn assembled_keys(p: &Program, skip: &BTreeSet<u64>) -> BTreeSet<[u8; 32]> {
             let Some(list) = by_slot.get(&(cmp, base, want_off)) else {
                 break;
             };
-            let lo = w.pc.saturating_sub(KEY_PC_WINDOW);
+            let lo = at.saturating_sub(KEY_PC_WINDOW);
             let first = list.partition_point(|&i| cands[i].pc < lo);
             let hit = list[first..]
                 .iter()
-                .take_while(|&&i| cands[i].pc <= w.pc + KEY_PC_WINDOW)
-                .find(|&&i| !used[i] && i != a);
+                .take_while(|&&i| cands[i].pc <= at + KEY_PC_WINDOW)
+                .find(|&&i| !used[i] && !parts.contains(&i));
             match hit {
-                Some(&b) => parts.push(b),
+                Some(&b) => {
+                    parts.push(b);
+                    at = cands[b].pc;
+                }
                 None => break,
             }
         }
@@ -337,13 +346,17 @@ fn shape(n: &str) -> &str {
     n.split_whitespace().next().unwrap_or("")
 }
 
+fn sets_return(n: &str) -> bool {
+    n.starts_with("mov64 r0,") || n.starts_with("mov32 r0,") || n.starts_with("lddw r0,")
+}
+
 fn same_shape(old: &Program, a: usize, new: &Program, b: usize) -> usize {
     let mut k = 0;
     while k < SHAPE_WINDOW {
         let (Some(x), Some(y)) = (old.norm.get(a + k), new.norm.get(b + k)) else {
             break;
         };
-        if shape(x) != shape(y) {
+        if shape(x) != shape(y) || (sets_return(x) && x != y) {
             break;
         }
         k += 1;
