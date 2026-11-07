@@ -336,6 +336,20 @@ checks the ELF for `security.txt`, and looks up the authority account's
 owner with a zero-length `dataSlice`. Errors are recorded per program so one
 bad id doesn't stop the run.
 
-## 10. Planned interfaces
+## 10. Watcher (`snapshots.rs`, `tidemark watch`)
+
+Snapshots live at `<dir>/<program>/<last_deploy_slot>.so`. `store` writes to a
+`.part` file and renames it, so a crash never leaves a truncated snapshot that
+looks complete, and it returns `false` when that slot is already stored.
+`previous(dir, program, slot)` is the largest stored slot below `slot`;
+files that don't parse as `<u64>.so` are ignored.
+
+Each poll: `rpc::fetch`, `store`; on a new slot with a previous snapshot, run
+`diff::compare(previous, deployed)`, print it, write `<prev>-<slot>.json`, and
+with `--attest` call the same `attest_report` the `attest` command uses. RPC
+errors are logged and the loop continues; `--once` turns them into a failing
+exit code. The interval is at least 5 s.
+
+## 11. Planned interfaces
 
 - `POST /v1/review {old, new}` returns the report and its hash, backed by the cache.

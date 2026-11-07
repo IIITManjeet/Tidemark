@@ -177,10 +177,23 @@ Expensive work runs only when it has to:
    deployments can add KV-cache quantization (TurboQuant-style, about 3–4 bits
    per value) to cut memory further.
 
-### 9. Upgrade watcher with snapshots · Roadmap
-A watcher subscribes to loader `Upgrade` instructions and snapshots ProgramData
-*before* it is overwritten, so the "old" side of every diff is always available.
-Each review is attested automatically.
+### 9. Upgrade watcher with snapshots · Shipped (polling)
+`tidemark watch <program>` polls ProgramData and keeps every deployed version
+under `snapshots/<program>/<deploy slot>.so`. When the deploy slot changes it
+reviews the upgrade against the previous snapshot, prints the report and
+writes `<old slot>-<new slot>.json`. With `--attest <ledger>` it also records
+each review on the ledger, using the same path as `tidemark attest`.
+
+```
+$ tidemark watch 5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3
+5pHTpt…: baseline snapshot at slot 519447118
+5pHTpt…: upgraded, slot 519447118 -> 519503311
+Tidemark upgrade review  (tm-rules-0.3) …
+```
+
+The watcher needs to be running before an upgrade to have the old version;
+subscribing to loader `Upgrade` instructions over websockets, so no version
+is missed between polls, is still on the roadmap.
 
 ### 10. Multisig pre-approval review · Roadmap
 When an upgrade proposal is created, Tidemark diffs the proposal's buffer
@@ -330,6 +343,7 @@ cargo run -p tidemark-cli -- verify-ledger --program <LEDGER_PROGRAM_ID> --regis
 # inspect any deployed program
 cargo run -p tidemark-cli -- fetch <PROGRAM_ID> -o program.so
 cargo run -p tidemark-cli -- census <PROGRAM_ID>...      # who can upgrade these programs?
+cargo run -p tidemark-cli -- watch <PROGRAM_ID>          # review every upgrade as it lands
 ```
 
 ### Commands
