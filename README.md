@@ -233,15 +233,21 @@ in a locked-down process: no network, read-only filesystem, a minimal syscall
 allowlist (seccomp-bpf, Landlock) and a distroless container image. Signing
 keys never share a process with untrusted input.
 
-### 14. Distribution: npm (Shipped) and VS Code (Roadmap)
+### 14. Distribution: npm and VS Code · Shipped
 - **npm package** (`npm/`, Shipped): `tidemark-core` compiled to WebAssembly.
   `review(old, new)` returns the same report and verdict hash as
   `tidemark diff --json`, `inspect(bytes)` lists syscalls and handlers, and
   `fetchLedger(rpc, ledger, registry)` pulls the ledger accounts over JSON-RPC
   and verifies the whole chain in the browser. CI builds the package and checks
   it against the CLI's demo report. Not published to the npm registry yet.
-- **VS Code extension** (Roadmap): diff a local build against the deployed program before
-  you run `anchor deploy`, with findings shown inline.
+- **VS Code extension** (`vscode/`, Shipped): *Tidemark: Review a build
+  against the deployed program* fetches the program over RPC (setting
+  `tidemark.rpc`) and reviews your local `.so` against it before you run
+  `anchor deploy`; *Review two program binaries* compares any two files. The
+  report goes to a Tidemark output channel, with a warning when risk reaches
+  `tidemark.warnAt`. Build with `bash scripts/build-vscode.sh`; not on the
+  Marketplace yet.
+- Showing findings inline in the editor is still on the roadmap.
 
 ### 15. Web app · Shipped (diff viewer and ledger feed)
 `web/` is a static site on top of the npm package; nothing runs on a server.

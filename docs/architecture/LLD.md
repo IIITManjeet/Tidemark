@@ -18,6 +18,7 @@ tidemark/
 │   └── tidemark-wasm/         wasm-bindgen exports for the npm package
 ├── npm/                       package.json, ledger.js, test.mjs (dist/ is generated)
 ├── web/                       static web app (index.html, app.js, style.css)
+├── vscode/                    VS Code extension (extension.js, review.js; wasm/ is generated)
 ├── contracts/                 Anchor workspace (separate toolchain)
 │   └── programs/
 │       ├── tidemark-ledger/   attestation registry
@@ -337,6 +338,11 @@ JSON strings: `review`, `inspect`, `verifyLedger` and `rulesVersion`.
 accounts (base64) and runs `ledger::snapshot_from` plus `ledger::verify`, the
 same code the CLI's `verify-ledger` uses. `npm/ledger.js` fetches those
 accounts with `fetch`, so the browser never trusts an indexer.
+
+`programDataAddress`, `deployedInfo` and `deployedElf` let JS turn raw
+`getAccountInfo` data into the deployed ELF with the same parsing and
+`elf_len` trimming as `tidemark fetch`; the VS Code extension uses them, built
+with `wasm-bindgen --target nodejs` (`scripts/build-vscode.sh`).
 
 `scripts/build-wasm.sh` builds the release `.wasm` and runs
 `wasm-bindgen --target web` into `npm/dist/`.
