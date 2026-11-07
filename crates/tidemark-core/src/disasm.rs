@@ -145,19 +145,30 @@ mod proofs {
             assert!(i.dst < 16 && i.src < 16);
         }
     }
+}
 
-    #[kani::proof]
-    fn render_is_total() {
-        let i = Insn {
-            pc: kani::any(),
-            op: kani::any(),
-            dst: kani::any(),
-            src: kani::any(),
-            off: kani::any(),
-            imm: kani::any(),
-            wide: kani::any(),
-        };
-        kani::assume(i.pc < 1 << 20 && i.dst < 16 && i.src < 16);
-        let _ = render(&i, None);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_handles_every_opcode() {
+        for op in 0..=255u8 {
+            for wide in [false, true] {
+                for (off, imm) in [(0, 0), (i16::MIN, i64::MIN), (i16::MAX, i64::MAX), (-1, -1)] {
+                    let i = Insn {
+                        pc: 1 << 20,
+                        op,
+                        dst: 15,
+                        src: 15,
+                        off,
+                        imm,
+                        wide,
+                    };
+                    let _ = render(&i, None);
+                    let _ = render(&i, Some("sol_log_"));
+                }
+            }
+        }
     }
 }

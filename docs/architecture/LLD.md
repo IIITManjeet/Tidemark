@@ -280,7 +280,6 @@ compiles it.
 | Harness | Property |
 |---|---|
 | `disasm::decode_is_total_and_in_bounds` | any ≤32-byte input decodes without panic; every instruction lies inside the input |
-| `disasm::render_is_total` | rendering never panics |
 | `elf::version_check_is_total` | `sbpf_version` accepts only EM_BPF/EM_SBPF and returns ≤ 3 |
 | `elf::slot_scans_stay_in_bounds` | store, compare and dispatch scans never index out of bounds |
 | `elf::rodata_window_matches_naive_scan` | the sliding window agrees with a direct count on every window of a 34-byte input |

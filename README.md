@@ -131,7 +131,7 @@ demo upgrade, and the Kani proofs.
 
 ### 5. Typed, proof-checked Rust · Shipped
 - **Kani model-checking harnesses**, run in CI on every push and pull request:
-  the sBPF decoder on any input up to 32 bytes, instruction rendering, the SBPF
+  the sBPF decoder on any input up to 32 bytes, the SBPF
   version check for every header, the ELF length computation on any 192-byte
   header, the loader's store, compare and dispatch scans over any 6
   instructions, the `.rodata` key scan against a naive reference, the ledger
