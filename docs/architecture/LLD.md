@@ -17,6 +17,7 @@ tidemark/
 │   ├── tidemark-cli/          `tidemark` binary
 │   └── tidemark-wasm/         wasm-bindgen exports for the npm package
 ├── npm/                       package.json, ledger.js, test.mjs (dist/ is generated)
+├── web/                       static web app (index.html, app.js, style.css)
 ├── contracts/                 Anchor workspace (separate toolchain)
 │   └── programs/
 │       ├── tidemark-ledger/   attestation registry
