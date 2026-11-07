@@ -262,29 +262,57 @@ not found.
 | `inspect FILE` | hash, size, syscalls, callx, constants, security.txt | 0 |
 | `fetch PROGRAM_ID --rpc URL -o FILE` | writes ELF, prints authority and last deploy slot | 0 |
 
-## 4. tidemark-ledger (v2)
+## 4. tidemark-ledger (v3; v2 still read)
+
+v3 is a new program (`8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6`, built for
+SBPF v3 so it can be frozen after SIMD-0500). The v2 program on devnet keeps
+working; clients pick the layout from the registry account (148 bytes is v2,
+188 is v3) and `ledger::layout_for` picks it for new registries by program id.
 
 ### 4.1 Accounts
 
 | Account | Seeds | Fields |
 |---|---|---|
-| RegistryV2 | `["registry2", authority]` | authority, pending_authority, name, count, last_hash, threshold, active_reviewers, bump |
+| RegistryV3 | `["registry3", seed_key]` | seed_key (the first authority, never changes), authority, pending_authority, name, count, last_hash, threshold, active_reviewers, config_version, bump |
 | Reviewer | `["reviewer", registry, key]` | registry, key, active, added_slot, bump |
-| AttestationV2 | `["attest2", registry, count_le]` | registry, index, program, old_code_hash, new_code_hash, report_hash (verdict), risk, rules_version, model_id, reviewer, slot, prev_hash, entry_hash, threshold, approvals, bump |
-| Approval | `["approval", attestation, reviewer]` | attestation, reviewer, slot, bump |
+| AttestationV3 | `["attest3", registry, count_le]` | the v2 fields (registry, index, program, old/new code hash, report_hash, risk, rules_version, model_id, reviewer, slot, prev_hash, entry_hash, threshold, approvals) plus program_data, deployed_slot, config_version, bump |
+| ApprovalV3 | `["approval", attestation, reviewer]` | registry, attestation, reviewer, slot, digest, bump |
+
+v2 used `["registry2", authority]`, so rotating the authority moved the
+registry's address and every client rejected it. v3 seeds from the stored
+`seed_key`, so rotation only changes a field (the pattern Squads uses with its
+create key). `config_version` goes up on every reviewer, threshold or authority
+change, and each entry records the version it was written under.
 
 ### 4.2 Instructions
 
 | Instruction | Signers | Checks |
 |---|---|---|
-| `init_registry(name, threshold)` | authority, payer | threshold ≥ 1 |
+| `init_registry(name, threshold)` | authority, payer | threshold ≥ 1; seed_key = authority |
 | `add_reviewer(key)` | authority, payer | `has_one = authority`; Reviewer PDA must not exist |
 | `set_reviewer_active(active)` | authority | deactivating may not drop active reviewers below the threshold |
 | `set_threshold(k)` | authority | 1 ≤ k ≤ active reviewers |
 | `propose_authority(key)` | authority | |
 | `accept_authority()` | pending authority | signer equals `pending_authority`, which is non-default |
-| `attest(args)` | reviewer, payer | Reviewer PDA for the signer exists and is active; risk ≤ 4; creates the entry and the submitter's Approval |
-| `approve(report_hash)` | reviewer, payer | active Reviewer; entry belongs to the registry; hash equals the entry's; Approval PDA must not exist |
+| `attest(args)` | reviewer, payer | active Reviewer; risk ≤ 4; `target_program` and `program_data` are owned by the upgradeable loader and the Program account names that ProgramData; SHA-256 of `program_data[45 .. 45 + elf_len]` equals `new_code_hash`; records the ProgramData slot as `deployed_slot`; creates the entry and the submitter's Approval |
+| `approve(digest)` | reviewer, payer | active Reviewer; entry belongs to the registry; `digest == SHA-256("tidemark/approval/v1" ‖ entry_hash)`; Approval PDA must not exist |
+
+**Deploy binding.** The attestation can only be written while the reviewed
+bytes are the deployed bytes: the program hashes the ELF in ProgramData itself
+(about 0.5 CU per byte, so the CLI asks for 1.4 M compute units). A later
+upgrade changes the ProgramData slot, so clients can tell "deployed now" from
+"what was reviewed", and `tidemark approve` refuses an entry whose
+`deployed_slot` is not the current deploy.
+
+**Full-content approvals.** The entry hash commits to every field, including
+risk, rules version, program, both code hashes and the deploy slot. Approving
+the domain-separated digest of it means a co-signer approves all of them, not
+just the verdict hash; `tidemark approve` also re-runs the review and compares
+risk and rules version before signing.
+
+**Approvals are filterable.** ApprovalV3 starts with the registry, so clients
+fetch only their registry's approvals (`memcmp` at offset 8) instead of every
+approval on the program.
 
 The payer is a separate signer everywhere rent is paid, so reviewers need no SOL.
 
@@ -311,17 +339,24 @@ reviewers in agreement.
 ### 4.5 Off-chain verification (`ledger.rs`)
 
 1. Registry account owner is the ledger program and its address equals
-   `PDA("registry2", authority)`.
+   `PDA("registry2", authority)` for v2 or `PDA("registry3", seed_key)` for v3.
 2. Entries are fetched with `getProgramAccounts` (dataSize + registry memcmp),
    sorted by index, and must be contiguous from 0.
-3. Each entry's address equals `PDA("attest2", registry, index)`, its
+3. Each entry's address equals `PDA("attest2" | "attest3", registry, index)`, its
    `registry` field matches, `prev_hash` links, `entry_hash` recomputes, and
    slots never decrease.
 4. The submitter and every approver must be Reviewer accounts of this registry;
    each Approval address equals `PDA("approval", entry, reviewer)`; approvers
    are unique; their count equals `approvals` and includes the submitter.
+   For v3 every Approval names this registry and carries the entry's approval
+   digest, and every entry has deploy fields.
 5. The last entry equals `registry.last_hash` and the count matches.
 6. With several `--rpc` values the chain head must agree across all of them.
+7. Approvals by reviewers whose `added_slot` is after the entry's slot are
+   counted and shown, so a quorum completed by reviewers added later is visible.
+8. `verify-ledger` also reads the ledger program's own ProgramData and prints
+   its upgrade authority and last deploy slot, warning if the ledger was
+   redeployed after its first entry.
 
 ### 4.6 Transactions (`submit.rs`)
 
