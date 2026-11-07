@@ -123,14 +123,16 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     let insns = disasm::decode_for(text, version);
 
     let mut reloc_names: HashMap<usize, String> = HashMap::new();
-    let low = |addr: u64, len: u64| (addr & 0xffff_ffff).saturating_add(len);
+    let file_len = bytes.len() as u64;
+    let low = |addr: u64, len: u64| (addr & 0xffff_ffff).saturating_add(len.min(file_len));
     let image_end = elf
         .section_headers
         .iter()
         .map(|s| low(s.sh_addr, s.sh_size))
-        .chain(loads.iter().map(|h| low(h.p_vaddr, h.p_memsz)))
+        .chain(loads.iter().map(|h| low(h.p_vaddr, h.p_filesz)))
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(file_len.saturating_mul(2));
     let mut relocated: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for r in elf.dynrels.iter() {
         if matches!(r.r_type, R_BPF_64_RELATIVE | R_BPF_64_64) && r.r_offset >= text_addr {
