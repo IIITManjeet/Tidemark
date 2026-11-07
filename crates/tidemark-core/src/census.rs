@@ -70,7 +70,7 @@ fn owner_of(rpc: &str, key: &str) -> anyhow::Result<Option<String>> {
     let r = crate::rpc::call(
         rpc,
         "getAccountInfo",
-        serde_json::json!([key, {"encoding": "base64", "commitment": "confirmed", "dataSlice": {"offset": 0, "length": 0}}]),
+        serde_json::json!([key, {"encoding": "base64", "commitment": "finalized", "dataSlice": {"offset": 0, "length": 0}}]),
     )?;
     Ok(r["value"]["owner"].as_str().map(String::from))
 }
