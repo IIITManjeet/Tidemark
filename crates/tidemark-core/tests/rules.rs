@@ -388,3 +388,135 @@ fn handler_name_with_digits_is_matched() {
     let f = r.findings.iter().find(|f| f.id == "TM-IX-CHANGE").unwrap();
     assert_eq!(f.detail, vec!["+ sweep_1"]);
 }
+
+fn shared_helper(a_calls_helper: bool) -> Program {
+    let mut norm = vec!["mov64 r0, 0"; 60];
+    for k in [11, 21] {
+        norm[k] = "ja <l>";
+    }
+    for k in [34, 39, 54] {
+        norm[k] = "exit";
+    }
+    let mut p = program(&norm);
+    p.flow = (0..60)
+        .map(|pc| tidemark_core::elf::Flow {
+            pc,
+            ..Default::default()
+        })
+        .collect();
+    let mut calls = vec![(10, 30), (20, 35), (36, 50)];
+    if a_calls_helper {
+        calls.push((31, 50));
+    }
+    for (at, to) in calls {
+        p.flow[at].target = Some(to);
+        p.flow[at].is_call = true;
+    }
+    p.dispatch = vec![(0xaaaa, 10, 0), (0xbbbb, 20, 3)];
+    p.error_codes = vec![(51, 3010)];
+    p.imm_counts.insert(3010, 1);
+    p
+}
+
+#[test]
+fn check_dropped_from_one_caller_of_a_shared_helper_is_caught() {
+    let r = compare(&shared_helper(true), &shared_helper(false));
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-CHECK-GONE")
+        .expect("check finding");
+    assert_eq!(
+        f.detail,
+        vec!["0x000000000000aaaa: AccountNotSigner (3010): 1 → 0 check sites"]
+    );
+}
+
+fn with_branch(target: usize) -> Program {
+    let norm = [
+        "mov64 r3, 1",
+        "mov64 r4, 2",
+        "mov64 r5, 3",
+        "mov64 r6, 4",
+        "jne r1, r2, <l>",
+        "mov64 r7, 5",
+        "mov64 r8, 6",
+        "mov64 r0, 0",
+        "exit",
+        "mov64 r9, 7",
+        "mov64 r0, 3012",
+        "exit",
+        "mov64 r2, 8",
+        "mov64 r3, 9",
+        "mov64 r4, 10",
+        "mov64 r5, 11",
+        "exit",
+    ];
+    let mut p = program(&norm);
+    p.flow = (0..norm.len())
+        .map(|pc| tidemark_core::elf::Flow {
+            pc,
+            ..Default::default()
+        })
+        .collect();
+    p.flow[4].target = Some(target);
+    p
+}
+
+#[test]
+fn error_branch_sent_to_the_success_return_is_caught() {
+    let r = compare(&with_branch(10), &with_branch(7));
+    assert!(ids(&r).contains(&"TM-BRANCH-RETARGET"), "{:?}", ids(&r));
+}
+
+#[test]
+fn check_inlined_far_from_the_dispatch_stub_is_still_counted() {
+    let mut a = two_handlers(&[]);
+    a.error_codes = vec![(28, 2002)];
+    a.imm_counts.insert(2002, 1);
+    let b = two_handlers(&[]);
+    let r = compare(&a, &b);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-CHECK-GONE")
+        .expect("check finding");
+    assert_eq!(
+        f.detail,
+        vec!["outside any handler: ConstraintSigner (2002): 1 → 0 check sites"]
+    );
+}
+
+#[test]
+fn key_limbs_spread_apart_are_still_assembled() {
+    let a = program(&["exit"]);
+    let mut b = program(&["exit"]);
+    for (j, v) in limbs(&sweep_key()).into_iter().enumerate() {
+        b.wide.push(WideLoad {
+            pc: 10 + j * 50,
+            value: v,
+            slot: Some((10, -64 + 8 * j as i16)),
+            cmp: false,
+        });
+    }
+    assert_eq!(key_detail(&compare(&a, &b)).len(), 1);
+}
+
+#[test]
+fn decoy_dispatch_cluster_does_not_hide_a_removed_check() {
+    let a = two_handlers(&[(31, 2002)]);
+    let mut b = two_handlers(&[]);
+    for k in 0..6u64 {
+        b.dispatch.push((0xdec0 + k, 30, 100 + k as usize));
+    }
+    let r = compare(&a, &b);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "TM-CHECK-GONE")
+        .expect("check finding");
+    assert_eq!(
+        f.detail,
+        vec!["outside any handler: ConstraintSigner (2002): 1 → 0 check sites"]
+    );
+}

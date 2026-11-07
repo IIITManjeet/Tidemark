@@ -19,7 +19,7 @@ async function accounts(url, ledger, size, registry) {
   if (registry) filters.push({ memcmp: { offset: 8, bytes: registry } });
   const list = await rpc(url, "getProgramAccounts", [
     ledger,
-    { encoding: "base64", commitment: "confirmed", filters },
+    { encoding: "base64", commitment: "finalized", filters },
   ]);
   return list.map((a) => ({ address: a.pubkey, data: a.account.data[0] }));
 }
@@ -27,7 +27,7 @@ async function accounts(url, ledger, size, registry) {
 export async function fetchLedger(url, ledger, registry) {
   const info = await rpc(url, "getAccountInfo", [
     registry,
-    { encoding: "base64", commitment: "confirmed" },
+    { encoding: "base64", commitment: "finalized" },
   ]);
   if (!info.value) throw new Error(`registry ${registry} not found`);
   if (info.value.owner !== ledger) {

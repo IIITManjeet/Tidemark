@@ -103,8 +103,8 @@ the store slot, or failing that the slot of the compared value. Store and
 compare slots are kept apart.
 
 Keys are assembled per program: four non-zero immediates (not handler
-discriminators) in consecutive slots of one base register within 64
-instructions, accepted if the 32 bytes hold 20+ distinct values. The rule
+discriminators) in consecutive slots of one base register, each limb within
+64 instructions of the previous one, accepted if the 32 bytes hold 20+ distinct values. The rule
 then reports keys assembled in the new program that were neither assembled in
 the old one nor present in its `.rodata`. Comparing whole keys rather than
 limbs means limbs planted ahead of time in an older version don't hide a key,
@@ -113,7 +113,9 @@ and a single low-entropy limb doesn't either.
 `.rodata` is scanned with a sliding 32-byte window at every offset (24+
 distinct bytes, under 28 printable). Overlapping new windows are joined, so a
 longer random blob shows up once as `<first window> (start of an N-byte
-blob)`; at most 4096 new windows are examined.
+blob)`; at most 4096 new windows are examined. The loader keeps at most
+65,536 windows per program, so a multi-megabyte random `.rodata` stays cheap
+(the finding still fires; only the detail list is truncated).
 
 **Handlers (`handlers.rs`).** Anchor dispatches with
 `ldxdw rA, [rB+0]; lddw rC, disc; jeq rA, rC, stub`. The loader records every
@@ -130,7 +132,11 @@ after every `exit`. From a handler's stub (up to 32 instructions, stopping at
 `ja`/`exit`) the walk follows internal calls and sums the error-code
 immediates (2000–3999, 6000–6999) of every function reached. Old and new
 handlers with the same discriminator are compared code by code, so a decoy
-check added to another handler no longer cancels a removed one. A decoy added
+check added to another handler no longer cancels a removed one. The stub's
+own check window ends where its call scan ends (the first `ja`/`exit`). The
+program-wide count still runs as a backstop: a code whose total fell without
+any handler accounting for it is reported as `outside any handler`, which
+covers handlers inlined into the entrypoint. A decoy added
 inside code the same handler reaches still can. The walk has a total budget
 of 4M steps; past it the rule falls back to program-wide counts.
 
@@ -142,6 +148,9 @@ look-alike blocks wrongly (Anchor handler stubs differ only in stack offsets),
 so the map is refined first. Aligned branches vote on where each old target
 went; when every vote agrees and the two blocks have the same opcode sequence
 up to the next `ja`/`exit` (at least two instructions), that block is remapped.
+Lines that set `r0` (`mov64/mov32/lddw r0, …`, the return code) must match
+exactly, so an error return and a success return never count as the same
+block, and a branch moved from one to the other is reported.
 Calls then vote the same way. A mismatch is reported only if both the
 instruction and the old target sit inside runs aligned for 4 lines either
 side, which drops pairings inside rewritten code. Moving a branch onto a block
@@ -182,6 +191,14 @@ timeout and a 64 MiB response cap.
 
 When the diff deadline is hit the report sets `diff_exact: false` and the CLI
 says the hunks are approximate.
+
+Known limits of the rules, beyond those above: `lddw` values that look like
+addresses (below the image end, or upper half 1–4) are not tracked as
+constants, so a limit in that range can change unnoticed; only the largest
+dispatch cluster is treated as the handler table; constants that are only
+added (none removed) don't raise TM-CONST-CHANGE; and an honest compiler
+change that merges identical error returns lowers check counts and can raise
+a false TM-CHECK-GONE.
 
 ## 3. tidemark-cli
 
@@ -318,6 +335,56 @@ accounts with `fetch`, so the browser never trusts an indexer.
 `scripts/build-wasm.sh` builds the release `.wasm` and runs
 `wasm-bindgen --target web` into `npm/dist/`.
 
-## 9. Planned interfaces
+## 9. Census (`census.rs`)
+
+`classify(authority, authority_owner)`:
+
+| Condition | Result |
+|---|---|
+| no upgrade authority | `Immutable` |
+| authority account owned by Squads v4/v3 | `Multisig` |
+| owned by SPL Governance | `Governance` |
+| authority on the ed25519 curve | `SingleKey` |
+| otherwise (a PDA) | `ProgramControlled` with the owner if it isn't the System Program |
+
+`survey(rpc, program)` reads the program owner (a program not owned by the
+upgradeable loader is immutable), fetches ProgramData through `rpc::fetch`,
+checks the ELF for `security.txt`, and looks up the authority account's
+owner with a zero-length `dataSlice`. Errors are recorded per program so one
+bad id doesn't stop the run.
+
+## 10. Watcher (`snapshots.rs`, `tidemark watch`)
+
+Snapshots live at `<dir>/<program>/<last_deploy_slot>.so`. `store` writes to a
+`.part` file and renames it, so a crash never leaves a truncated snapshot that
+looks complete, and it returns `false` when that slot is already stored.
+`previous(dir, program, slot)` is the largest stored slot below `slot`;
+files that don't parse as `<u64>.so` are ignored.
+
+Each poll: `rpc::fetch`, `store`; on a new slot with a previous snapshot, run
+`diff::compare(previous, deployed)`, print it, write `<prev>-<slot>.json`, and
+with `--attest` call the same `attest_report` the `attest` command uses. RPC
+errors are logged and the loop continues; `--once` turns them into a failing
+exit code. The interval is at least 5 s.
+
+## 11. Review cache (`cache.rs`)
+
+`tidemark diff --cache <dir>` stores `{report, verdict_hash, report_hash}` at
+`<dir>/<rules version>/<sha256 old>-<sha256 new>.json`. Both hashes are taken
+from the input bytes before loading, so a hit skips parsing and diffing. An
+entry is used only if its report names the same rules version and both
+hashes, its overall risk equals the highest finding severity, and its stored
+verdict and report hashes match ones recomputed from the cached report.
+Anything else, including a corrupt file, is a miss: the review is recomputed
+and the entry rewritten. This stops edits that change the risk, findings or
+hashes on their own, but entries are not signed: someone who can write the
+cache folder can rewrite an entry consistently. Treat the folder as trusted
+local state and don't restore it from an untrusted source (for example a CI
+cache shared with pull requests from forks).
+A new rules version uses a new folder, so a rules change never serves a stale
+verdict. The CLI prints from the report's JSON form, so cached and fresh
+reviews print identically.
+
+## 12. Planned interfaces
 
 - `POST /v1/review {old, new}` returns the report and its hash, backed by the cache.

@@ -177,20 +177,49 @@ Expensive work runs only when it has to:
    deployments can add KV-cache quantization (TurboQuant-style, about 3–4 bits
    per value) to cut memory further.
 
-### 9. Upgrade watcher with snapshots · Roadmap
-A watcher subscribes to loader `Upgrade` instructions and snapshots ProgramData
-*before* it is overwritten, so the "old" side of every diff is always available.
-Each review is attested automatically.
+### 9. Upgrade watcher with snapshots · Shipped (polling)
+`tidemark watch <program>` polls ProgramData and keeps every deployed version
+under `snapshots/<program>/<deploy slot>.so`. When the deploy slot changes it
+reviews the upgrade against the previous snapshot, prints the report and
+writes `<old slot>-<new slot>.json`. With `--attest <ledger>` it also records
+each review on the ledger, using the same path as `tidemark attest`.
+
+```
+$ tidemark watch 5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3
+5pHTpt…: baseline snapshot at slot 519447118
+5pHTpt…: upgraded, slot 519447118 -> 519503311
+Tidemark upgrade review  (tm-rules-0.3) …
+```
+
+The watcher needs to be running before an upgrade to have the old version;
+subscribing to loader `Upgrade` instructions over websockets, so no version
+is missed between polls, is still on the roadmap.
 
 ### 10. Multisig pre-approval review · Roadmap
 When an upgrade proposal is created, Tidemark diffs the proposal's buffer
 against the live program and posts the report to signers during the timelock
 window, so nobody approves bytecode they haven't seen.
 
-### 11. Upgrade-authority census · Roadmap
-A public dashboard that classifies every upgradeable program by who controls
-it: single key, multisig (threshold and timelock read on-chain), governance, or
-immutable. It joins this with verified-build and `security.txt` status.
+### 11. Upgrade-authority census · Shipped (CLI)
+`tidemark census <program ids…>` (or `--file`) classifies who can upgrade each
+program and whether it embeds a `security.txt`:
+- **immutable**: no upgrade authority, or not owned by the upgradeable loader
+- **single key**: the authority is an ordinary ed25519 key
+- **multisig / governance**: the authority account is owned by Squads v3/v4
+  or SPL Governance
+- **program-controlled (PDA)**: the authority is off the ed25519 curve, so no
+  private key exists and only a program can sign. Squads v4 vaults show up
+  this way, since a vault PDA is a plain system account.
+
+```
+$ tidemark census --rpc https://api.mainnet-beta.solana.com JUP6Lkb… whirLbM… MarBmsS…
+JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4   program-controlled (PDA)   no
+whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc   program-controlled (PDA)   no
+MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD   program-controlled (PDA)   yes
+```
+
+Reading multisig thresholds and timelocks, verified-build status and a public
+dashboard are still on the roadmap.
 
 ### 12. MEV transparency layer · Roadmap
 A slot scanner detects sandwich patterns (buy → victim → sell on one pool in
@@ -221,9 +250,9 @@ keys never share a process with untrusted input.
 - **Ledger**: enter an RPC endpoint, ledger program and registry. The page
   pulls the raw accounts and verifies the hash chain, PDAs, reviewer allowlist
   and quorum itself, then lists each attestation with its risk and approvals.
-- Dark, glass-panel interface: midnight black surfaces, electric blue for
-  actions, orange reserved for high-risk findings, and severity always written
-  out as text as well as colour.
+- Restrained dark interface: near-black panels with fine rules, a serif for
+  headings, blue for actions and orange reserved for high-risk findings.
+  Severity is always written out as text as well as colour.
 
 Build it with `bash scripts/build-web.sh` (writes `site/`) and serve that
 folder with any static server, e.g. `python -m http.server -d site`.
@@ -302,6 +331,7 @@ docs/architecture/       HLD.md, LLD.md
 ```sh
 # review the demo upgrade (v1 → backdoored v2)
 cargo run -p tidemark-cli -- diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so --json report.json
+cargo run -p tidemark-cli -- diff old.so new.so --cache .tidemark-cache   # reuse earlier reviews (trusted local folder)
 
 # publish a review of a deployed upgrade (snapshot taken before the upgrade)
 cargo run -p tidemark-cli -- init-registry --ledger <LEDGER> --threshold 1
@@ -313,6 +343,8 @@ cargo run -p tidemark-cli -- verify-ledger --program <LEDGER_PROGRAM_ID> --regis
 
 # inspect any deployed program
 cargo run -p tidemark-cli -- fetch <PROGRAM_ID> -o program.so
+cargo run -p tidemark-cli -- census <PROGRAM_ID>...      # who can upgrade these programs?
+cargo run -p tidemark-cli -- watch <PROGRAM_ID>          # review every upgrade as it lands
 ```
 
 ### Commands

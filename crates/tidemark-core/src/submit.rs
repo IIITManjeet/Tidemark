@@ -43,7 +43,7 @@ pub fn pubkey_of(k: &SigningKey) -> Pubkey {
     *k.verifying_key().as_bytes()
 }
 
-fn on_curve(b: &Pubkey) -> bool {
+pub fn on_curve(b: &Pubkey) -> bool {
     CompressedEdwardsY(*b).decompress().is_some()
 }
 
@@ -286,12 +286,13 @@ impl Ctx<'_> {
 
     fn require_active_reviewer(&self, registry: &Pubkey, me: &Pubkey) -> Result<()> {
         let who = bs58::encode(me).into_string();
-        let Some(data) = self.account_data(&self.reviewer_address(registry, me)?)? else {
+        let addr = self.reviewer_address(registry, me)?;
+        let Some(data) = self.account_data(&addr)? else {
             bail!(
                 "{who} is not a reviewer of this registry; ask its authority to run add-reviewer"
             );
         };
-        let (_, r) = crate::ledger::parse_reviewer(&data)?;
+        let (_, r) = crate::ledger::parse_reviewer(addr, &data)?;
         if !r.active {
             bail!("{who} is a disabled reviewer of this registry");
         }

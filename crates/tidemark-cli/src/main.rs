@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tidemark_core::diff::{self, Report, Severity};
 use tidemark_core::submit::{self, Ctx, Pubkey};
-use tidemark_core::{elf, ledger, report_hash, rpc, verdict_hash, verdict_risk};
+use tidemark_core::{elf, ledger, rpc, verdict_hash, verdict_risk};
 
 macro_rules! out {
     ($($t:tt)*) => {{
@@ -55,6 +55,11 @@ enum Cmd {
             help = "Exit with code 2 when risk reaches this level (info, low, medium, high, critical)"
         )]
         fail_on: String,
+        #[arg(
+            long,
+            help = "Reuse and store reviews in this directory, keyed by both hashes and the rules version"
+        )]
+        cache: Option<PathBuf>,
     },
     #[command(about = "Summarize one program binary")]
     Inspect { file: PathBuf },
@@ -65,6 +70,41 @@ enum Cmd {
         rpc: String,
         #[arg(short, long)]
         out: PathBuf,
+    },
+    #[command(about = "Snapshot a program and review every upgrade as it lands")]
+    Watch {
+        program: String,
+        #[arg(long, default_value = DEVNET)]
+        rpc: String,
+        #[arg(
+            long,
+            default_value = "snapshots",
+            help = "Where snapshots and reports are kept"
+        )]
+        dir: PathBuf,
+        #[arg(long, default_value_t = 30, help = "Seconds between checks")]
+        interval: u64,
+        #[arg(long, help = "Check once and exit")]
+        once: bool,
+        #[arg(long, help = "Attest each review to this tidemark-ledger program")]
+        attest: Option<String>,
+        #[arg(
+            long,
+            help = "Registry to attest into (defaults to the one your key controls)"
+        )]
+        registry: Option<String>,
+        #[arg(long, default_value = DEFAULT_KEYPAIR)]
+        keypair: String,
+    },
+    #[command(about = "Classify who can upgrade each program")]
+    Census {
+        programs: Vec<String>,
+        #[arg(long, help = "Read program ids from this file, one per line")]
+        file: Option<PathBuf>,
+        #[arg(long, default_value = DEVNET)]
+        rpc: String,
+        #[arg(long, help = "Print JSON instead of a table")]
+        json: bool,
     },
     #[command(about = "Create a reviewer registry with a k-of-n approval threshold")]
     InitRegistry {
@@ -172,16 +212,6 @@ fn short(k: &[u8; 32]) -> String {
     format!("{}…{}", &s[..4], &s[s.len() - 4..])
 }
 
-fn sev(s: Severity) -> &'static str {
-    match s {
-        Severity::Critical => "CRITICAL",
-        Severity::High => "HIGH",
-        Severity::Medium => "MEDIUM",
-        Severity::Low => "LOW",
-        Severity::Info => "INFO",
-    }
-}
-
 struct Keys {
     signer: SigningKey,
     payer: SigningKey,
@@ -205,36 +235,50 @@ fn ctx<'a>(c: &'a Chain, k: &'a Keys) -> Result<Ctx<'a>> {
 }
 
 fn print_report(r: &Report, hunks: usize) {
-    out!("Tidemark upgrade review  ({})", r.rules_version);
-    out!(
-        "  old  {}  {} insns",
-        &r.old.sha256[..16],
-        r.old.instructions
-    );
-    out!(
-        "  new  {}  {} insns",
-        &r.new.sha256[..16],
-        r.new.instructions
-    );
+    print_value(&serde_json::to_value(r).expect("report serializes"), hunks);
+}
+
+fn print_value(r: &serde_json::Value, hunks: usize) {
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or("").to_string();
+    let label = |v: &serde_json::Value| text(v).to_uppercase();
+    let sha = |side: &str| {
+        text(&r[side]["sha256"])
+            .chars()
+            .take(16)
+            .collect::<String>()
+    };
+    out!("Tidemark upgrade review  ({})", text(&r["rules_version"]));
+    out!("  old  {}  {} insns", sha("old"), r["old"]["instructions"]);
+    out!("  new  {}  {} insns", sha("new"), r["new"]["instructions"]);
     out!(
         "  changed instructions: {} ({}%)",
-        r.changed_instructions,
-        r.churn_pct
+        r["changed_instructions"],
+        r["churn_pct"]
     );
-    out!("  overall risk: {}\n", sev(r.risk));
-    if !r.diff_exact {
+    out!("  overall risk: {}\n", label(&r["risk"]));
+    if r["diff_exact"] == false {
         out!("  note: the code diff hit its time limit; hunks and churn are approximate\n");
     }
-    for f in &r.findings {
-        out!("[{:8}] {}  {}", sev(f.severity), f.id, f.title);
-        for d in &f.detail {
-            out!("             {d}");
+    for f in r["findings"].as_array().into_iter().flatten() {
+        out!(
+            "[{:8}] {}  {}",
+            label(&f["severity"]),
+            text(&f["id"]),
+            text(&f["title"])
+        );
+        for d in f["detail"].as_array().into_iter().flatten() {
+            out!("             {}", text(d));
         }
     }
-    for h in r.hunks.iter().take(hunks) {
-        out!("\n@@ old {:#x} / new {:#x} @@", h.old_start, h.new_start);
-        for l in h.lines.iter().take(30) {
-            out!("{l}");
+    for h in r["hunks"].as_array().into_iter().flatten().take(hunks) {
+        let at = |k: &str| h[k].as_u64().unwrap_or(0);
+        out!(
+            "\n@@ old {:#x} / new {:#x} @@",
+            at("old_start"),
+            at("new_start")
+        );
+        for l in h["lines"].as_array().into_iter().flatten().take(30) {
+            out!("{}", text(l));
         }
     }
 }
@@ -246,6 +290,65 @@ fn review_deployed(rpc_url: &str, program: &str, old: &PathBuf) -> Result<Report
     Ok(diff::compare(&o, &n))
 }
 
+fn attest_report(
+    c: &Ctx,
+    signer: &SigningKey,
+    registry: Pubkey,
+    program: &str,
+    r: &Report,
+) -> Result<()> {
+    let mut rules = [0u8; 16];
+    let rv = r.rules_version.as_bytes();
+    rules[..rv.len().min(16)].copy_from_slice(&rv[..rv.len().min(16)]);
+    let input = submit::AttestInput {
+        program: submit::decode_pubkey(program)?,
+        old_code_hash: tidemark_core::parse_hash32(&r.old.sha256)?,
+        new_code_hash: tidemark_core::parse_hash32(&r.new.sha256)?,
+        report_hash: tidemark_core::parse_hash32(&verdict_hash(r))?,
+        risk: verdict_risk(r),
+        rules_version: rules,
+        model_id: [0u8; 32],
+    };
+    let (att, index, sig) = c.attest(signer, registry, &input)?;
+    out!("\nattestation  #{index} {}", b58(&att));
+    out!("registry     {}", b58(&registry));
+    out!("verdict      {}", verdict_hash(r));
+    out!("tx           {sig} (confirmed)");
+    Ok(())
+}
+
+fn watch_once(
+    rpc_url: &str,
+    program: &str,
+    dir: &std::path::Path,
+    attest: Option<(&Ctx, &SigningKey, Pubkey)>,
+) -> Result<()> {
+    use tidemark_core::snapshots;
+    let d = rpc::fetch(rpc_url, program)?;
+    let slot = d.last_deploy_slot;
+    if snapshots::path_for(dir, program, slot)?.exists() {
+        return Ok(());
+    }
+    let Some(prev) = snapshots::previous(dir, program, slot)? else {
+        snapshots::store(dir, program, slot, &d.elf)?;
+        out!("{program}: baseline snapshot at slot {slot}");
+        return Ok(());
+    };
+    out!("{program}: upgraded, slot {prev} -> {slot}\n");
+    let old = elf::load(&read(&snapshots::path_for(dir, program, prev)?)?)?;
+    let new = elf::load(&d.elf)?;
+    let r = diff::compare(&old, &new);
+    print_report(&r, 0);
+    let report = dir.join(program).join(format!("{prev}-{slot}.json"));
+    std::fs::write(&report, serde_json::to_string_pretty(&r)?)?;
+    out!("\nreport written to {}", report.display());
+    if let Some((c, signer, registry)) = attest {
+        attest_report(c, signer, registry, program, &r)?;
+    }
+    snapshots::store(dir, program, slot, &d.elf)?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Diff {
@@ -254,19 +357,41 @@ fn main() -> Result<()> {
             json,
             hunks,
             fail_on,
+            cache,
         } => {
             let gate = Severity::parse(&fail_on)?;
-            let o = elf::load(&read(&old)?)?;
-            let n = elf::load(&read(&new)?)?;
-            let r = diff::compare(&o, &n);
-            print_report(&r, hunks);
-            out!("\nverdict hash  {}", verdict_hash(&r));
-            out!("report hash   {}", report_hash(&r));
+            let (a, b) = (read(&old)?, read(&new)?);
+            let (sa, sb) = (elf::sha256_hex(&a), elf::sha256_hex(&b));
+            let hit = cache
+                .as_deref()
+                .and_then(|d| tidemark_core::cache::get(d, &sa, &sb));
+            let cached = hit.is_some();
+            let e = match hit {
+                Some(e) => e,
+                None => {
+                    let r = diff::compare(&elf::load(&a)?, &elf::load(&b)?);
+                    let e = tidemark_core::cache::entry(&r);
+                    if let Some(d) = &cache {
+                        tidemark_core::cache::put(d, &sa, &sb, &e)?;
+                    }
+                    e
+                }
+            };
+            let r = &e["report"];
+            print_value(r, hunks);
+            out!(
+                "\nverdict hash  {}",
+                e["verdict_hash"].as_str().unwrap_or("")
+            );
+            out!("report hash   {}", e["report_hash"].as_str().unwrap_or(""));
+            if cached {
+                out!("(from cache)");
+            }
             if let Some(p) = json {
-                std::fs::write(&p, serde_json::to_string_pretty(&r)?)?;
+                std::fs::write(&p, serde_json::to_string_pretty(r)?)?;
                 out!("JSON report written to {}", p.display());
             }
-            if r.risk >= gate {
+            if Severity::parse(r["risk"].as_str().context("report has no risk")?)? >= gate {
                 std::process::exit(2);
             }
         }
@@ -304,6 +429,97 @@ fn main() -> Result<()> {
                 d.upgrade_authority.as_deref().unwrap_or("none (immutable)")
             );
             out!("wrote {} bytes to {}", d.elf.len(), out.display());
+        }
+        Cmd::Watch {
+            program,
+            rpc: url,
+            dir,
+            interval,
+            once,
+            attest,
+            registry,
+            keypair,
+        } => {
+            let chain = attest.map(|ledger| Chain {
+                ledger,
+                rpc: url.clone(),
+                keypair,
+                payer: None,
+            });
+            let k = chain.as_ref().map(keys).transpose()?;
+            let c = match (&chain, &k) {
+                (Some(ch), Some(k)) => Some(ctx(ch, k)?),
+                _ => None,
+            };
+            let reg = match (&c, &k) {
+                (Some(c), Some(k)) => Some(match &registry {
+                    Some(r) => submit::decode_pubkey(r)?,
+                    None => c.registry_address(&submit::pubkey_of(&k.signer))?,
+                }),
+                _ => None,
+            };
+            loop {
+                let target = match (&c, &k, reg) {
+                    (Some(c), Some(k), Some(r)) => Some((c, &k.signer, r)),
+                    _ => None,
+                };
+                match watch_once(&url, &program, &dir, target) {
+                    Ok(()) => {}
+                    Err(e) if !once => eprintln!("{program}: {e:#}"),
+                    Err(e) => return Err(e),
+                }
+                if once {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(interval.max(5)));
+            }
+        }
+        Cmd::Census {
+            mut programs,
+            file,
+            rpc: url,
+            json,
+        } => {
+            if let Some(f) = file {
+                let text = std::fs::read_to_string(&f)?;
+                programs.extend(
+                    text.lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                        .map(String::from),
+                );
+            }
+            if programs.is_empty() {
+                bail!("give program ids as arguments or with --file");
+            }
+            let rows: Vec<_> = programs
+                .iter()
+                .map(|p| tidemark_core::census::survey(&url, p))
+                .collect();
+            if json {
+                out!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                out!(
+                    "{:<44}  {:<28}  {:<10}  {}",
+                    "program",
+                    "upgrade control",
+                    "sec.txt",
+                    "authority"
+                );
+                for r in &rows {
+                    let control = match &r.error {
+                        Some(e) => format!("error: {e}"),
+                        None => r.control.label(),
+                    };
+                    out!(
+                        "{:<44}  {:<28}  {:<10}  {}",
+                        r.program,
+                        control,
+                        if r.security_txt { "yes" } else { "no" },
+                        r.authority.as_deref().unwrap_or("-")
+                    );
+                }
+            }
         }
         Cmd::InitRegistry {
             chain,
@@ -368,23 +584,7 @@ fn main() -> Result<()> {
             if let Some(p) = json {
                 std::fs::write(&p, serde_json::to_string_pretty(&r)?)?;
             }
-            let mut rules = [0u8; 16];
-            let rv = r.rules_version.as_bytes();
-            rules[..rv.len().min(16)].copy_from_slice(&rv[..rv.len().min(16)]);
-            let input = submit::AttestInput {
-                program: submit::decode_pubkey(&program)?,
-                old_code_hash: tidemark_core::parse_hash32(&r.old.sha256)?,
-                new_code_hash: tidemark_core::parse_hash32(&r.new.sha256)?,
-                report_hash: tidemark_core::parse_hash32(&verdict_hash(&r))?,
-                risk: verdict_risk(&r),
-                rules_version: rules,
-                model_id: [0u8; 32],
-            };
-            let (att, index, sig) = c.attest(&k.signer, registry, &input)?;
-            out!("\nattestation  #{index} {}", b58(&att));
-            out!("registry     {}", b58(&registry));
-            out!("verdict      {}", verdict_hash(&r));
-            out!("tx           {sig} (confirmed)");
+            attest_report(&c, &k.signer, registry, &program, &r)?;
         }
         Cmd::Approve {
             chain,

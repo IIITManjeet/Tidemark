@@ -168,7 +168,8 @@ fn stub(p: &Program, funcs: &Functions, target: usize) -> (Vec<usize>, BTreeMap<
     let mut roots = Vec::new();
     let mut checks = BTreeMap::new();
     let start = p.flow.partition_point(|f| f.pc < target);
-    for k in start..p.flow.len().min(start + STUB_LEN) {
+    let mut stop = p.flow.len().min(start + STUB_LEN);
+    for k in start..stop {
         let f = &p.flow[k];
         if f.is_call {
             if let Some(i) = f.target.and_then(|t| funcs.entries.binary_search(&t).ok()) {
@@ -177,11 +178,12 @@ fn stub(p: &Program, funcs: &Functions, target: usize) -> (Vec<usize>, BTreeMap<
         }
         if let Some(n) = p.norm.get(k) {
             if n.starts_with("ja ") || n == "exit" {
+                stop = k + 1;
                 break;
             }
         }
     }
-    let end = p.flow.get(start + STUB_LEN).map_or(usize::MAX, |f| f.pc);
+    let end = p.flow.get(stop).map_or(usize::MAX, |f| f.pc);
     for &(pc, code) in &p.error_codes {
         if pc >= target && pc < end && funcs.of(pc) == funcs.of(target) {
             *checks.entry(code).or_default() += 1;
