@@ -66,6 +66,16 @@ enum Cmd {
         #[arg(short, long)]
         out: PathBuf,
     },
+    #[command(about = "Classify who can upgrade each program")]
+    Census {
+        programs: Vec<String>,
+        #[arg(long, help = "Read program ids from this file, one per line")]
+        file: Option<PathBuf>,
+        #[arg(long, default_value = DEVNET)]
+        rpc: String,
+        #[arg(long, help = "Print JSON instead of a table")]
+        json: bool,
+    },
     #[command(about = "Create a reviewer registry with a k-of-n approval threshold")]
     InitRegistry {
         #[command(flatten)]
@@ -304,6 +314,53 @@ fn main() -> Result<()> {
                 d.upgrade_authority.as_deref().unwrap_or("none (immutable)")
             );
             out!("wrote {} bytes to {}", d.elf.len(), out.display());
+        }
+        Cmd::Census {
+            mut programs,
+            file,
+            rpc: url,
+            json,
+        } => {
+            if let Some(f) = file {
+                let text = std::fs::read_to_string(&f)?;
+                programs.extend(
+                    text.lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                        .map(String::from),
+                );
+            }
+            if programs.is_empty() {
+                bail!("give program ids as arguments or with --file");
+            }
+            let rows: Vec<_> = programs
+                .iter()
+                .map(|p| tidemark_core::census::survey(&url, p))
+                .collect();
+            if json {
+                out!("{}", serde_json::to_string_pretty(&rows)?);
+            } else {
+                out!(
+                    "{:<44}  {:<28}  {:<10}  {}",
+                    "program",
+                    "upgrade control",
+                    "sec.txt",
+                    "authority"
+                );
+                for r in &rows {
+                    let control = match &r.error {
+                        Some(e) => format!("error: {e}"),
+                        None => r.control.label(),
+                    };
+                    out!(
+                        "{:<44}  {:<28}  {:<10}  {}",
+                        r.program,
+                        control,
+                        if r.security_txt { "yes" } else { "no" },
+                        r.authority.as_deref().unwrap_or("-")
+                    );
+                }
+            }
         }
         Cmd::InitRegistry {
             chain,
