@@ -29,6 +29,7 @@
   html {
     color-scheme: dark;
     scroll-behavior: smooth;
+    overflow-x: clip;
   }
   body {
     @apply min-h-screen overflow-x-hidden bg-bg font-sans text-[15px] leading-relaxed text-text antialiased;

@@ -94,8 +94,24 @@ avoid them (for example splitting a key across functions, or reusing an
 existing CPI call site). Treat a clean report as "nothing obvious
 changed", not as proof of safety. Known gaps are tracked as GitHub issues.
 
-### 3. Quorum-signed attestation ledger · Shipped (live on devnet)
-An Anchor program (`tidemark-ledger` v2) records reviews on Solana. Who may
+### 3. Quorum-signed attestation ledger · Shipped (v2 live on devnet, v3 tested locally)
+An Anchor program (`tidemark-ledger`) records reviews on Solana. v3
+(`8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6`, built for SBPF v3) adds:
+- **Deploy binding**: `attest` reads the reviewed program's ProgramData on
+  chain, hashes the ELF itself and refuses unless it is the reviewed build; the
+  deploy slot and ELF length go into the entry. `approve` refuses once the
+  program has been redeployed.
+- **Full-content approvals**: each approval signs a domain-separated digest of
+  the entry hash, which covers program, both code hashes, risk, rules version
+  and deploy slot, and `tidemark approve` verifies the whole chain first.
+- **Rotation-safe registries**: the address comes from the first authority,
+  stored as `seed_key`, so handing a registry to a new key keeps its address.
+  A `config_version` counter records every reviewer, threshold or authority
+  change, and late-added approvers are shown.
+
+The full v3 flow (register, upgrade, attest, co-sign, rotate, verify, refuse
+after a redeploy) has been run end to end on a local validator; devnet deploy
+is pending. Clients read v2 and v3. In both versions: Who may
 speak for a registry is enforced by the contract itself, not by trusting
 whoever holds a key file.
 - **Reviewer allowlist**: only keys the registry authority adds on-chain
@@ -127,8 +143,9 @@ whoever holds a key file.
   failed one is reported as a failure.
 
 Remaining trust assumption: the ledger program on devnet is still upgradeable
-by a single key (tracked in #15, to move behind a multisig with a timelock or
-be frozen).
+by a single key (tracked in #15, to move behind a multisig with a timelock and
+then be frozen). `verify-ledger` prints the ledger's own upgrade authority and
+warns if it was redeployed after entries were written.
 
 ### 4. CI gate for safe code shipping · Shipped
 `tidemark diff` exits with code `2` when the risk reaches the `--fail-on` level
@@ -410,6 +427,10 @@ bash scripts/build-fixtures.sh      # on-chain programs + demo fixtures (Solana 
 
 ## Documentation
 
+- The web app ships a documentation site (`/docs`): quickstart, CLI, VS Code,
+  npm, CI gate, rules, ledger, AI judge, and the security model. Build it with
+  `bash scripts/build-web.sh` and open `web/out/index.html` through any static
+  server.
 - [High-level design](docs/architecture/HLD.md)
 - [Low-level design](docs/architecture/LLD.md)
 
