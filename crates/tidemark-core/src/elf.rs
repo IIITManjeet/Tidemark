@@ -357,6 +357,70 @@ fn extract_consts(data: &[u8], out: &mut BTreeSet<[u8; 32]>) {
     }
 }
 
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    fn any_insns<const N: usize>() -> Vec<disasm::Insn> {
+        (0..N)
+            .map(|pc| {
+                let i = disasm::Insn {
+                    pc,
+                    op: kani::any(),
+                    dst: kani::any(),
+                    src: kani::any(),
+                    off: kani::any(),
+                    imm: kani::any(),
+                    wide: kani::any(),
+                };
+                kani::assume(i.dst < 16 && i.src < 16);
+                i
+            })
+            .collect()
+    }
+
+    #[kani::proof]
+    fn version_check_is_total() {
+        let (m, f): (u16, u32) = (kani::any(), kani::any());
+        if let Ok(v) = sbpf_version(m, f) {
+            assert!(v <= 3);
+            assert!(m == EM_BPF || m == EM_SBPF);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(7)]
+    fn slot_scans_stay_in_bounds() {
+        let insns = any_insns::<6>();
+        let n: usize = kani::any();
+        kani::assume(n < insns.len());
+        let _ = stored_to(&insns, n);
+        let _ = compared_with(&insns, n);
+        if let Some(t) = dispatch_target(&insns, n) {
+            assert!(t <= insns.len() + (i16::MAX as usize) + 1);
+        }
+    }
+
+    #[kani::proof]
+    #[kani::unwind(36)]
+    fn rodata_window_matches_naive_scan() {
+        let data: [u8; 34] = kani::any();
+        let mut fast = BTreeSet::new();
+        extract_consts(&data, &mut fast);
+        for i in 0..=2 {
+            let w = &data[i..i + 32];
+            let mut seen = [false; 256];
+            let (mut distinct, mut printable) = (0, 0);
+            for &b in w {
+                distinct += !std::mem::replace(&mut seen[b as usize], true) as usize;
+                printable += (0x20..0x7f).contains(&b) as usize;
+            }
+            let k: [u8; 32] = w.try_into().unwrap();
+            assert_eq!(fast.contains(&k), distinct >= 24 && printable < 28);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
