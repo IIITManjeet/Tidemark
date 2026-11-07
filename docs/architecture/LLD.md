@@ -113,7 +113,9 @@ and a single low-entropy limb doesn't either.
 `.rodata` is scanned with a sliding 32-byte window at every offset (24+
 distinct bytes, under 28 printable). Overlapping new windows are joined, so a
 longer random blob shows up once as `<first window> (start of an N-byte
-blob)`; at most 4096 new windows are examined.
+blob)`; at most 4096 new windows are examined. The loader keeps at most
+65,536 windows per program, so a multi-megabyte random `.rodata` stays cheap
+(the finding still fires; only the detail list is truncated).
 
 **Handlers (`handlers.rs`).** Anchor dispatches with
 `ldxdw rA, [rB+0]; lddw rC, disc; jeq rA, rC, stub`. The loader records every
