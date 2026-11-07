@@ -73,7 +73,7 @@ pub struct Report {
     pub hunks: Vec<Hunk>,
 }
 
-pub const RULES_VERSION: &str = "tm-rules-0.4";
+pub const RULES_VERSION: &str = "tm-rules-0.5";
 
 const KNOWN: &[(&str, &str)] = &[
     ("11111111111111111111111111111111", "System Program"),
@@ -319,6 +319,7 @@ fn const_findings(old: &Program, new: &Program, skip: &BTreeSet<u64>, findings: 
         .filter(|v| !skip.contains(v))
         .copied()
         .collect();
+    split_key_findings(new, &added, findings);
     if gone.is_empty() {
         if !added.is_empty() {
             findings.push(Finding {
@@ -349,6 +350,54 @@ fn const_findings(old: &Program, new: &Program, skip: &BTreeSet<u64>, findings: 
             added.len()
         ),
         detail,
+    });
+}
+
+const LIMB_DISTINCT: usize = 6;
+const LIMB_SPAN: usize = 4 * KEY_PC_WINDOW;
+
+fn split_key_findings(new: &Program, added: &[u64], findings: &mut Vec<Finding>) {
+    let entropic: BTreeSet<u64> = added
+        .iter()
+        .copied()
+        .filter(|v| v.to_le_bytes().iter().collect::<BTreeSet<_>>().len() >= LIMB_DISTINCT)
+        .collect();
+    let mut sites: Vec<(usize, u64)> = new
+        .flow
+        .iter()
+        .filter_map(|f| {
+            f.constant
+                .filter(|c| entropic.contains(c))
+                .map(|c| (f.pc, c))
+        })
+        .collect();
+    sites.sort_unstable();
+    let mut best: Vec<u64> = Vec::new();
+    for (i, &(pc, _)) in sites.iter().enumerate() {
+        let near: BTreeSet<u64> = sites[i..]
+            .iter()
+            .take_while(|(p, _)| *p <= pc + LIMB_SPAN)
+            .map(|(_, c)| *c)
+            .collect();
+        if near.len() > best.len() {
+            best = near.into_iter().collect();
+        }
+    }
+    if best.len() < 4 {
+        return;
+    }
+    findings.push(Finding {
+        id: "TM-KEY-SPLIT",
+        severity: Severity::High,
+        title: format!(
+            "{} new high-entropy constants close together (possibly a key in pieces)",
+            best.len()
+        ),
+        detail: best
+            .iter()
+            .take(MAX_DETAIL)
+            .map(|v| format!("+ {v:#018x}"))
+            .collect(),
     });
 }
 
@@ -434,16 +483,15 @@ fn line_of(flow: &[crate::elf::Flow], pc: usize) -> Option<usize> {
 
 const MAX_DETAIL: usize = 12;
 
-fn retarget_findings(
-    old: &Program,
-    new: &Program,
-    td: &TextDiff<'_, '_, '_, str>,
-    findings: &mut Vec<Finding>,
-) {
-    if old.flow.len() != old.norm.len() || new.flow.len() != new.norm.len() {
-        return;
-    }
+fn aligned(p: &Program) -> bool {
+    p.flow.len() == p.norm.len()
+}
+
+fn line_map(old: &Program, new: &Program, td: &TextDiff<'_, '_, '_, str>) -> Vec<Option<usize>> {
     let mut map: Vec<Option<usize>> = vec![None; old.flow.len()];
+    if !aligned(old) || !aligned(new) {
+        return map;
+    }
     for op in td.ops() {
         if let similar::DiffOp::Equal {
             old_index,
@@ -460,12 +508,173 @@ fn retarget_findings(
     }
     refine(old, new, &mut map, false);
     refine(old, new, &mut map, true);
-    let line = |p: &Program, i: usize| {
-        p.lines
-            .get(i)
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default()
+    map
+}
+
+fn line(p: &Program, i: usize) -> String {
+    p.lines
+        .get(i)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+const GUARD_REACH: usize = 24;
+const SURGICAL: usize = 4;
+
+fn error_lines(p: &Program) -> Vec<bool> {
+    let mut e = vec![false; p.flow.len()];
+    for &(pc, _) in &p.error_codes {
+        if let Some(i) = line_of(&p.flow, pc) {
+            e[i] = true;
+        }
+    }
+    e
+}
+
+fn reaches(p: &Program, hit: &[bool], mut i: usize) -> bool {
+    for _ in 0..GUARD_REACH {
+        let Some(n) = p.norm.get(i) else { return false };
+        if hit[i] {
+            return true;
+        }
+        match shape(n) {
+            "exit" => return false,
+            "ja" => match p.flow[i].target.and_then(|t| line_of(&p.flow, t)) {
+                Some(t) => i = t,
+                None => return false,
+            },
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+fn is_guard(p: &Program, errs: &[bool], i: usize) -> bool {
+    let f = p.flow[i];
+    if f.is_call || shape(&p.norm[i]) == "ja" {
+        return false;
+    }
+    let Some(t) = f.target.and_then(|t| line_of(&p.flow, t)) else {
+        return false;
     };
+    reaches(p, errs, t) != reaches(p, errs, i + 1)
+}
+
+fn is_branch(p: &Program, i: usize) -> bool {
+    let f = p.flow[i];
+    f.target.is_some() && !f.is_call && shape(&p.norm[i]) != "ja"
+}
+
+fn neutralized(p: &Program, j: usize, in_place: bool) -> bool {
+    let f = p.flow[j];
+    if f.is_call {
+        return false;
+    }
+    match f.target {
+        None => in_place && shape(&p.norm[j]) != "exit",
+        Some(t) => shape(&p.norm[j]) == "ja" || line_of(&p.flow, t) == Some(j + 1),
+    }
+}
+
+fn guard_findings(
+    old: &Program,
+    new: &Program,
+    td: &TextDiff<'_, '_, '_, str>,
+    map: &[Option<usize>],
+    findings: &mut Vec<Finding>,
+) {
+    if !aligned(old) || !aligned(new) {
+        return;
+    }
+    let (eo, en) = (error_lines(old), error_lines(new));
+    let mut pair = map.to_vec();
+    let (mut in_place, mut cut) = (BTreeSet::new(), BTreeSet::new());
+    for op in td.ops() {
+        match *op {
+            similar::DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } if old_len.max(new_len) <= SURGICAL => {
+                for k in 0..old_len {
+                    if k >= new_len {
+                        cut.insert(old_index + k);
+                    } else if pair[old_index + k].is_none() {
+                        pair[old_index + k] = Some(new_index + k);
+                        in_place.insert(old_index + k);
+                    }
+                }
+            }
+            similar::DiffOp::Delete {
+                old_index, old_len, ..
+            } if old_len <= SURGICAL => cut.extend(old_index..old_index + old_len),
+            _ => {}
+        }
+    }
+    let guard_at: Vec<bool> = (0..old.flow.len()).map(|i| is_guard(old, &eo, i)).collect();
+    let old_guards: Vec<usize> = (0..old.flow.len()).filter(|&i| guard_at[i]).collect();
+    let new_guards = (0..new.flow.len())
+        .filter(|&j| is_guard(new, &en, j))
+        .count();
+    let near: Vec<bool> = eo.iter().zip(&guard_at).map(|(e, g)| *e || *g).collect();
+    let (mut weakened, mut removed) = (Vec::new(), Vec::new());
+    for i in 0..old.flow.len() {
+        if !is_branch(old, i) {
+            continue;
+        }
+        let feeds = guard_at[i] || reaches(old, &near, i + 1) || {
+            let t = old.flow[i].target.and_then(|t| line_of(&old.flow, t));
+            t.is_some_and(|t| reaches(old, &near, t))
+        };
+        if !feeds {
+            continue;
+        }
+        match pair[i] {
+            Some(j) if neutralized(new, j, in_place.contains(&i)) => {
+                weakened.push(format!("{}  became  {}", line(old, i), line(new, j)))
+            }
+            Some(_) => {}
+            None if guard_at[i] && cut.contains(&i) => {
+                removed.push(format!("{}  removed", line(old, i)))
+            }
+            None => {}
+        }
+    }
+    let lost = old_guards.len().saturating_sub(new_guards);
+    removed.truncate(lost);
+    let mut d = weakened;
+    d.extend(removed);
+    if d.is_empty() {
+        return;
+    }
+    let total = d.len();
+    let widespread = total * 4 > old_guards.len().max(1);
+    d.truncate(MAX_DETAIL);
+    if total > MAX_DETAIL {
+        d.push(format!("… and {} more", total - MAX_DETAIL));
+    }
+    if widespread {
+        d.push("Many error paths changed at once; a toolchain change can do this.".into());
+    }
+    findings.push(Finding {
+        id: "TM-GUARD-GONE",
+        severity: if widespread {
+            Severity::Medium
+        } else {
+            Severity::High
+        },
+        title: format!("Branches into error paths were neutralized or removed ({total})"),
+        detail: d,
+    });
+}
+
+fn retarget_findings(
+    old: &Program,
+    new: &Program,
+    map: &[Option<usize>],
+    findings: &mut Vec<Finding>,
+) {
     let (mut branches, mut calls) = (Vec::new(), Vec::new());
     for (i, m) in map.iter().enumerate() {
         let Some(j) = *m else { continue };
@@ -477,7 +686,7 @@ fn retarget_findings(
             continue;
         };
         let Some(expected) = map[to] else { continue };
-        if !anchored(&map, to, expected) || !anchored(&map, i, j) {
+        if !anchored(map, to, expected) || !anchored(map, i, j) {
             continue;
         }
         let Some(got) = line_of(&new.flow, tb) else {
@@ -714,7 +923,33 @@ pub fn compare(old: &Program, new: &Program) -> Report {
         .timeout(DIFF_DEADLINE)
         .diff_lines(&a, &b);
     let diff_exact = started.elapsed() < DIFF_DEADLINE;
-    retarget_findings(old, new, &td, &mut findings);
+    let map = line_map(old, new, &td);
+    retarget_findings(old, new, &map, &mut findings);
+    guard_findings(old, new, &td, &map, &mut findings);
+    let mut cut = Vec::new();
+    if !diff_exact {
+        cut.push("the instruction diff hit its time limit and is approximate".to_string());
+    }
+    for (side, p, h) in [("old", old, &oh), ("new", new, &nh)] {
+        if p.consts32.len() >= crate::elf::MAX_CONST_WINDOWS {
+            cut.push(format!(
+                "{side}: read-only data scan stopped at its window limit"
+            ));
+        }
+        if handlers::has_dispatch(p) && !h.values().any(|x| x.dispatched) {
+            cut.push(format!(
+                "{side}: handler walk ran out of budget; checks counted program-wide"
+            ));
+        }
+    }
+    if !cut.is_empty() {
+        findings.push(Finding {
+            id: "TM-PARTIAL",
+            severity: Severity::Medium,
+            title: "Analysis was cut short; findings may be missing".into(),
+            detail: cut,
+        });
+    }
     let const_skip: BTreeSet<u64> = skip.union(&key_limbs).copied().collect();
     const_findings(old, new, &const_skip, &mut findings);
     let mut changed = 0usize;

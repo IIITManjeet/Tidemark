@@ -76,13 +76,14 @@ its upper half is a VM region (1 to 4). Everything else is a constant and is
 compared as-is. Alongside each line the loader keeps a `Flow` record: the
 absolute branch or internal-call target and the constant, if any.
 
-### 2.3 Rules (`diff.rs`, `tm-rules-0.4`)
+### 2.3 Rules (`diff.rs`, `tm-rules-0.5`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
 | TM-KEY-ADD | new unknown 32-byte keys (see below) | High |
 | TM-PROG-REF | new keys matching well-known program ids | Low |
 | TM-CHECK-GONE | a handler reaches fewer immediates for Anchor check error codes (2001 has_one, 2002 signer, 2003 raw, 2004 owner, 2006 seeds, 2012 address, 3007 wrong owner program, 3010 not signer); program-wide counts if either side has no dispatch table | High |
+| TM-GUARD-GONE | an old conditional branch near an error path (see below) is now `ja`, a branch to its own fall-through, or a non-jump in an equal-length edit, or a guard was deleted in an edit of at most 4 lines | High; Medium when over a quarter of all guards change |
 | TM-ERR-GONE | a handler reaches fewer custom error immediates (6000–6999) | Medium |
 | TM-IX-CHANGE | handler set (by discriminator) changed; unnamed handlers show as their discriminator | Medium if added, else Low |
 | TM-SYSCALL-ADD | call-site count of a syscall rose | High for `invoke_signed*`, Low for other sensitive syscalls, else Info |
@@ -90,10 +91,12 @@ absolute branch or internal-call target and the constant, if any.
 | TM-CALLX-ADD | more `callx` sites | Medium |
 | TM-BRANCH-RETARGET | an aligned branch whose target no longer maps to the old target (see below) | High |
 | TM-CALL-RETARGET | same, for internal calls | High |
+| TM-KEY-SPLIT | 4+ new constants with 6+ distinct bytes each within 256 instructions | High |
 | TM-CONST-CHANGE | constants present in old and missing in new, excluding handler discriminators | Medium |
 | TM-CONST-ADD | constants only added, excluding discriminators and new key limbs | Low |
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
+| TM-PARTIAL | diff deadline hit, `.rodata` window cap reached, or handler walk out of budget | Medium |
 
 **Key recovery.** Compiled Rust rarely keeps a `Pubkey` constant as 32
 contiguous bytes. It loads it as four 64-bit `lddw` immediates and either
@@ -204,8 +207,24 @@ Discriminator compares outside the largest dispatch cluster that are new in
 this version, and not limbs of a new key, are listed under TM-IX-CHANGE as
 `(outside the dispatch table)`.
 
-Known limit: an honest compiler change that merges identical error returns
-lowers check counts and can raise a false TM-CHECK-GONE.
+**Guards.** Counting error-code immediates misses a check that is kept but
+can no longer fail: Anchor's `has_one` compiles to compares that set a flag,
+then one branch on the flag, and patching the compares into jumps leaves every
+error immediate in place. A *guard* is a conditional branch where exactly one
+successor reaches an error-code immediate within 24 instructions (following
+fall-through and `ja`, stopping at `exit`). A branch *feeds* a check if it is a
+guard or either successor reaches a guard or an error site in that window.
+Old branches are paired with new lines through the same map as retargets, plus
+position inside replace blocks of at most 4 lines. A feeding branch that now
+is `ja`, branches to its own fall-through, or (in an equal-length edit) is no
+longer a jump raises TM-GUARD-GONE; so does a guard deleted in a block of at
+most 4 lines, capped at the drop in the total guard count.
+
+Known limits: an honest compiler change that merges identical error returns
+lowers check counts and can raise a false TM-CHECK-GONE. A guard moved
+somewhere else in a large rewrite is not tracked; TM-CHURN covers that case.
+Keys computed at runtime, or read from an account, are not constants and are
+not found.
 
 ## 3. tidemark-cli
 

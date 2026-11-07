@@ -1280,6 +1280,6 @@
     "size": 206024
   },
   "risk": "high",
-  "rules_version": "tm-rules-0.4",
+  "rules_version": "tm-rules-0.5",
   "tool": "tidemark-core 0.1.0"
 }
