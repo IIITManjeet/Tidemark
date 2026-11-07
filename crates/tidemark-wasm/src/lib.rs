@@ -143,6 +143,33 @@ pub fn verify_ledger(input: &str) -> Result<String, JsError> {
     verify_json(input).map(|v| v.to_string()).map_err(err)
 }
 
+pub fn deployed_parts(programdata: &[u8]) -> anyhow::Result<(u64, Option<String>, Vec<u8>)> {
+    let pd = tidemark_core::rpc::parse_programdata(programdata)?;
+    if pd.elf.iter().all(|b| *b == 0) {
+        anyhow::bail!("the program has been closed");
+    }
+    let elf = pd.elf[..tidemark_core::rpc::elf_len(pd.elf)?].to_vec();
+    Ok((pd.slot, pd.authority.map(|a| bs58_encode(&a)), elf))
+}
+
+#[wasm_bindgen(js_name = programDataAddress)]
+pub fn program_data_address(program_account: &[u8]) -> Result<String, JsError> {
+    tidemark_core::rpc::parse_program_account(program_account)
+        .map(|k| bs58_encode(&k))
+        .map_err(err)
+}
+
+#[wasm_bindgen(js_name = deployedInfo)]
+pub fn deployed_info(programdata: &[u8]) -> Result<String, JsError> {
+    let (slot, authority, elf) = deployed_parts(programdata).map_err(err)?;
+    Ok(json!({"slot": slot, "authority": authority, "size": elf.len()}).to_string())
+}
+
+#[wasm_bindgen(js_name = deployedElf)]
+pub fn deployed_elf(programdata: &[u8]) -> Result<Vec<u8>, JsError> {
+    deployed_parts(programdata).map(|(_, _, e)| e).map_err(err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +199,21 @@ mod tests {
             .filter_map(|h| h["name"].as_str())
             .collect();
         assert!(names.contains(&"sweep"), "{names:?}");
+    }
+
+    #[test]
+    fn deployed_elf_round_trips_through_a_programdata_account() {
+        let elf = fixture("demo_vault_v2.so");
+        let mut pd = vec![3, 0, 0, 0];
+        pd.extend(42u64.to_le_bytes());
+        pd.push(1);
+        pd.extend([7u8; 32]);
+        pd.extend(&elf);
+        pd.extend([0u8; 512]);
+        let (slot, auth, got) = deployed_parts(&pd).unwrap();
+        assert_eq!((slot, got), (42, elf));
+        assert_eq!(auth.as_deref(), Some(bs58_encode(&[7u8; 32]).as_str()));
+        assert!(deployed_parts(&[3, 0, 0, 0]).is_err());
     }
 
     #[test]
