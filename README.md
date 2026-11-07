@@ -221,9 +221,9 @@ keys never share a process with untrusted input.
 - **Ledger**: enter an RPC endpoint, ledger program and registry. The page
   pulls the raw accounts and verifies the hash chain, PDAs, reviewer allowlist
   and quorum itself, then lists each attestation with its risk and approvals.
-- Dark, glass-panel interface: midnight black surfaces, electric blue for
-  actions, orange reserved for high-risk findings, and severity always written
-  out as text as well as colour.
+- Restrained dark interface: near-black panels with fine rules, a serif for
+  headings, blue for actions and orange reserved for high-risk findings.
+  Severity is always written out as text as well as colour.
 
 Build it with `bash scripts/build-web.sh` (writes `site/`) and serve that
 folder with any static server, e.g. `python -m http.server -d site`.
