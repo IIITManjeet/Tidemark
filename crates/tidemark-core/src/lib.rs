@@ -5,6 +5,7 @@ pub mod elf;
 pub mod handlers;
 pub mod ledger;
 pub mod rpc;
+pub mod snapshots;
 pub mod submit;
 pub mod syscalls;
 
