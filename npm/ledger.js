@@ -2,7 +2,7 @@ import { verifyLedger } from "./dist/tidemark.js";
 
 const LAYOUTS = {
   148: { attestation: 332, reviewer: 82, approval: 81, approvalsByRegistry: false },
-  188: { attestation: 380, reviewer: 82, approval: 145, approvalsByRegistry: true },
+  188: { attestation: 384, reviewer: 82, approval: 145, approvalsByRegistry: true },
 };
 
 async function rpc(url, method, params) {

@@ -17,7 +17,7 @@ pub const ATTESTATION_LEN: usize =
     DISC + 32 + 8 + 32 + 32 + 32 + 32 + 1 + 16 + 32 + 32 + 8 + 32 + 32 + 1 + 1 + 1;
 pub const APPROVAL_LEN: usize = DISC + 32 + 32 + 8 + 1;
 pub const REGISTRY3_LEN: usize = REGISTRY_LEN + 32 + 8;
-pub const ATTESTATION3_LEN: usize = ATTESTATION_LEN + 32 + 8 + 8;
+pub const ATTESTATION3_LEN: usize = ATTESTATION_LEN + 32 + 8 + 8 + 4;
 pub const APPROVAL3_LEN: usize = DISC + 32 + 32 + 32 + 8 + 32 + 1;
 
 const REGISTRY_DISC: [u8; 8] = [6, 226, 98, 169, 180, 69, 111, 252];
@@ -80,6 +80,7 @@ pub struct Deploy {
     pub program_data: Pubkey,
     pub deployed_slot: u64,
     pub config_version: u64,
+    pub elf_len: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -215,6 +216,7 @@ fn attestation_from(address: Pubkey, data: &[u8]) -> Option<Attestation> {
             program_data: r.take(),
             deployed_slot: r.u64(),
             config_version: r.u64(),
+            elf_len: u32::from_le_bytes(r.take()),
         });
     }
     Some(a)
@@ -293,6 +295,7 @@ pub fn entry_hash(a: &Attestation) -> [u8; 32] {
         h.update(d.program_data);
         h.update(d.deployed_slot.to_le_bytes());
         h.update(d.config_version.to_le_bytes());
+        h.update(d.elf_len.to_le_bytes());
     }
     h.finalize().into()
 }
@@ -619,6 +622,7 @@ mod tests {
                     program_data: [8; 32],
                     deployed_slot: 90 + i,
                     config_version: 1,
+                    elf_len: 1000,
                 }),
             };
             a.entry_hash = entry_hash(&a);
@@ -842,7 +846,7 @@ mod tests {
         assert_eq!(ATTESTATION_LEN, 8 + 324);
         assert_eq!(APPROVAL_LEN, 8 + 73);
         assert_eq!(REGISTRY3_LEN, 8 + 180);
-        assert_eq!(ATTESTATION3_LEN, 8 + 372);
+        assert_eq!(ATTESTATION3_LEN, 8 + 376);
         assert_eq!(APPROVAL3_LEN, 8 + 137);
     }
 }
