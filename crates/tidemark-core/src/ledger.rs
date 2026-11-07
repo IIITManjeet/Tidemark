@@ -55,6 +55,7 @@ pub struct Registry {
 
 #[derive(Debug, Clone)]
 pub struct Reviewer {
+    pub address: Pubkey,
     pub key: Pubkey,
     pub active: bool,
 }
@@ -123,12 +124,19 @@ fn attestation_from(address: Pubkey, data: &[u8]) -> Option<Attestation> {
     })
 }
 
-fn reviewer_from(data: &[u8]) -> Option<(Pubkey, Reviewer)> {
+fn reviewer_from(address: Pubkey, data: &[u8]) -> Option<(Pubkey, Reviewer)> {
     let mut r = body(data, REVIEWER_LEN, &REVIEWER_DISC)?;
     let registry = r.take();
     let key = r.take();
     let active = r.u8() == 1;
-    Some((registry, Reviewer { key, active }))
+    Some((
+        registry,
+        Reviewer {
+            address,
+            key,
+            active,
+        },
+    ))
 }
 
 fn approval_from(address: Pubkey, data: &[u8]) -> Option<Approval> {
@@ -148,8 +156,8 @@ pub fn parse_attestation(address: Pubkey, data: &[u8]) -> Result<Attestation> {
     attestation_from(address, data).context("not an AttestationV2 account")
 }
 
-pub fn parse_reviewer(data: &[u8]) -> Result<(Pubkey, Reviewer)> {
-    reviewer_from(data).context("not a Reviewer account")
+pub fn parse_reviewer(address: Pubkey, data: &[u8]) -> Result<(Pubkey, Reviewer)> {
+    reviewer_from(address, data).context("not a Reviewer account")
 }
 
 pub fn parse_approval(address: Pubkey, data: &[u8]) -> Result<Approval> {
@@ -183,6 +191,7 @@ pub enum ChainError {
     BadHash { index: u64 },
     SlotWentBack { index: u64 },
     UnknownReviewer { index: u64 },
+    BadReviewerAccount,
     ApprovalMismatch { index: u64 },
     HeadMismatch,
 }
@@ -209,6 +218,14 @@ pub fn verify(ledger: &Pubkey, s: &Snapshot) -> Result<Vec<EntryStatus>, ChainEr
         .0;
     if expect != reg.address {
         return Err(ChainError::WrongRegistryAddress);
+    }
+    for (key, r) in &s.reviewers {
+        let want = find_pda(&[b"reviewer", &reg.address, key], ledger)
+            .map_err(|_| ChainError::BadReviewerAccount)?
+            .0;
+        if want != r.address || r.key != *key {
+            return Err(ChainError::BadReviewerAccount);
+        }
     }
     let mut entries = s.attestations.clone();
     entries.sort_by_key(|a| a.index);
@@ -362,8 +379,8 @@ pub fn snapshot_from(
         .map(|(k, d)| parse_attestation(*k, d))
         .collect::<Result<Vec<_>>>()?;
     let mut by_key = BTreeMap::new();
-    for (_, d) in reviewers {
-        let (reg_key, r) = parse_reviewer(d)?;
+    for (k, d) in reviewers {
+        let (reg_key, r) = parse_reviewer(*k, d)?;
         if reg_key == registry.address {
             by_key.insert(r.key, r);
         }
@@ -447,6 +464,9 @@ mod tests {
         reviewers.insert(
             reviewer,
             Reviewer {
+                address: find_pda(&[b"reviewer", &reg_addr, &reviewer], &LEDGER)
+                    .unwrap()
+                    .0,
                 key: reviewer,
                 active: true,
             },
@@ -522,6 +542,18 @@ mod tests {
         assert_eq!(
             verify(&LEDGER, &s).err(),
             Some(ChainError::WrongRegistryAddress)
+        );
+    }
+
+    #[test]
+    fn reviewer_account_at_the_wrong_address_is_rejected() {
+        let mut s = chain(2);
+        for r in s.reviewers.values_mut() {
+            r.address = [7; 32];
+        }
+        assert_eq!(
+            verify(&LEDGER, &s).err(),
+            Some(ChainError::BadReviewerAccount)
         );
     }
 
