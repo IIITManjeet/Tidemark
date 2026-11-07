@@ -19,6 +19,7 @@ fn version_table() {
     assert_eq!(sbpf_version(247, 0x20).unwrap(), 2);
     assert_eq!(sbpf_version(263, 1).unwrap(), 1);
     assert_eq!(sbpf_version(263, 3).unwrap(), 3);
+    assert_eq!(sbpf_version(247, 3).unwrap(), 3);
     assert!(sbpf_version(263, 9).is_err());
     assert!(sbpf_version(62, 0).is_err());
 }
@@ -34,13 +35,9 @@ fn v1_is_accepted() {
 }
 
 #[test]
-fn v2_and_v3_are_refused_with_a_clear_message() {
-    for (m, f) in [(247u16, 0x20u32), (263, 2), (263, 3)] {
-        let e = load(&with_header(m, f))
-            .err()
-            .expect("should refuse")
-            .to_string();
-        assert!(e.contains("not supported yet"), "{e}");
+fn v4_and_unknown_flags_are_refused_with_a_clear_message() {
+    for (m, f) in [(247u16, 4u32), (263, 4), (247, 9)] {
+        assert!(load(&with_header(m, f)).is_err(), "{m} {f:#x}");
     }
 }
 
