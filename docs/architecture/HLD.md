@@ -65,7 +65,7 @@ anyone be worried?**
 | Explainer (planned) | Turns structured findings into a short plain-English summary | LLM with strict JSON schema |
 | Isolated runner (planned) | Parses untrusted binaries with no network, read-only FS, minimal syscalls | Linux namespaces, distroless image |
 | Web app (planned) | Diff viewer, attestation feed, authority census | Next.js, wallet adapter |
-| Distribution (planned) | npm package and VS Code extension | WASM build of core |
+| Distribution | npm package (shipped), VS Code extension (planned) | WASM build of core |
 
 ## 5. Key flows
 

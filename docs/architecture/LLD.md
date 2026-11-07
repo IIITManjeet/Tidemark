@@ -14,7 +14,9 @@ tidemark/
 │   │       ├── syscalls.rs    murmur3_32, syscall table and weights
 │   │       ├── diff.rs        Program × Program → Report (rules, hunks)
 │   │       └── rpc.rs         ProgramData fetch, upgrade authority
-│   └── tidemark-cli/          `tidemark` binary
+│   ├── tidemark-cli/          `tidemark` binary
+│   └── tidemark-wasm/         wasm-bindgen exports for the npm package
+├── npm/                       package.json, ledger.js, test.mjs (dist/ is generated)
 ├── contracts/                 Anchor workspace (separate toolchain)
 │   └── programs/
 │       ├── tidemark-ledger/   attestation registry
@@ -297,8 +299,24 @@ Some properties are tested rather than proved, because string formatting and
 operands, `sbpf_version` on the version table, and the `.rodata` sliding
 window against a naive count on 2,000 random inputs.
 
-## 8. Planned interfaces
+## 8. WebAssembly build
 
-- `tidemark-wasm`: `diff(old: Uint8Array, new: Uint8Array) -> ReportJson`, used
-  by the npm package and VS Code extension. RPC fetch stays on the host side.
+`tidemark-core` has a default `net` feature. Without it the crate drops `ureq`
+and every function that performs RPC (`rpc::call`/`fetch`, `submit::Ctx`,
+`ledger::fetch*`), so it compiles for `wasm32-unknown-unknown`. The diff
+deadline uses `web-time` there, and `similar` is built with
+`wasm32_web_time`, because `std::time::Instant` panics on that target.
+
+`tidemark-wasm` exports four functions that take bytes or JSON and return
+JSON strings: `review`, `inspect`, `verifyLedger` and `rulesVersion`.
+`verifyLedger` takes the raw registry, attestation, reviewer and approval
+accounts (base64) and runs `ledger::snapshot_from` plus `ledger::verify`, the
+same code the CLI's `verify-ledger` uses. `npm/ledger.js` fetches those
+accounts with `fetch`, so the browser never trusts an indexer.
+
+`scripts/build-wasm.sh` builds the release `.wasm` and runs
+`wasm-bindgen --target web` into `npm/dist/`.
+
+## 9. Planned interfaces
+
 - `POST /v1/review {old, new}` returns the report and its hash, backed by the cache.

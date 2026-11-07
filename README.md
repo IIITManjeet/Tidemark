@@ -203,10 +203,14 @@ in a locked-down process: no network, read-only filesystem, a minimal syscall
 allowlist (seccomp-bpf, Landlock) and a distroless container image. Signing
 keys never share a process with untrusted input.
 
-### 14. Distribution: npm and VS Code · Roadmap
-- **npm package**: a WASM build of `tidemark-core` exposing
-  `diff(old: Uint8Array, new: Uint8Array) → Report`, usable in Node, browsers and CLIs (`npx tidemark`).
-- **VS Code extension**: diff a local build against the deployed program before
+### 14. Distribution: npm (Shipped) and VS Code (Roadmap)
+- **npm package** (`npm/`, Shipped): `tidemark-core` compiled to WebAssembly.
+  `review(old, new)` returns the same report and verdict hash as
+  `tidemark diff --json`, `inspect(bytes)` lists syscalls and handlers, and
+  `fetchLedger(rpc, ledger, registry)` pulls the ledger accounts over JSON-RPC
+  and verifies the whole chain in the browser. CI builds the package and checks
+  it against the CLI's demo report. Not published to the npm registry yet.
+- **VS Code extension** (Roadmap): diff a local build against the deployed program before
   you run `anchor deploy`, with findings shown inline.
 
 ### 15. Web app · Roadmap
