@@ -13,8 +13,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
+      - name: Build and test the npm package
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.130 --locked
+          bash scripts/build-wasm.sh
+          cd npm && node test.mjs
       - name: Review demo upgrade (fails on High/Critical, which is expected for the fixture)
         run: |
           set +e
