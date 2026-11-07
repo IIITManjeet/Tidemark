@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0d11;
+  --color-panel: #101318;
+  --color-panel-2: #14181f;
+  --color-line: #222833;
+  --color-line-2: #2c3441;
+  --color-text: #e6e9ef;
+  --color-muted: #98a1b2;
+  --color-faint: #6c7484;
+  --color-accent: #3a7bfd;
+  --color-accent-2: #2f66d6;
+  --color-link: #8fb3ff;
+  --color-orange: #e8833a;
+  --color-red: #e5534b;
+  --color-amber: #d4a72c;
+  --color-green: #3fb27f;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-serif: var(--font-serif4), Georgia, serif;
+  --font-mono: var(--font-plex), ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply min-h-screen overflow-x-hidden bg-bg font-sans text-[15px] leading-relaxed text-text antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}
+
+@utility label-caps {
+  @apply text-[11px] tracking-[0.1em] text-faint uppercase;
+}
+
+@utility panel {
+  @apply rounded-[10px] border border-line bg-panel;
+}

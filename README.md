@@ -250,7 +250,9 @@ keys never share a process with untrusted input.
 - Showing findings inline in the editor is still on the roadmap.
 
 ### 15. Web app · Shipped (diff viewer and ledger feed)
-`web/` is a static site on top of the npm package; nothing runs on a server.
+`web/` is a Next.js app in TypeScript, styled with Tailwind, exported as a
+static site; nothing runs on a server. It loads the same WASM build as the npm
+package.
 - **Review**: drop the current and the new `.so` (or load the demo vault).
   The WASM engine produces the same findings, hunks and verdict hash as the CLI.
   Files never leave the browser.
@@ -265,16 +267,11 @@ keys never share a process with untrusted input.
   headings, blue for actions and orange reserved for high-risk findings.
   Severity is always written out as text as well as colour.
 
-Build it with `bash scripts/build-web.sh` (writes `site/`) and serve that
-folder with any static server, e.g. `python -m http.server -d site`.
+Build it with `bash scripts/build-web.sh` (writes `web/out/`) and serve that
+folder with any static server, e.g. `python -m http.server -d web/out`. Set
+`BASE_PATH=/Tidemark` when hosting under a subpath such as GitHub Pages. For
+development, run the build once and then `npm run dev` in `web/`.
 The authority census view is still on the roadmap.
-
-The visual language is **liquid glass**: panels are translucent layers with
-backdrop blur, soft refraction at the edges and light that follows depth, so
-the ledger feed and diff hunks read as stacked sheets over the chain. It
-respects `prefers-reduced-transparency` and `prefers-reduced-motion`, falling
-back to solid surfaces that keep WCAG AA contrast, so the effect never costs
-legibility.
 
 ---
 

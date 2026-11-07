@@ -28,6 +28,8 @@ jobs:
         run: |
           bash scripts/build-vscode.sh
           cd vscode && node test.js
+      - name: Build the web app
+        run: bash scripts/build-web.sh
       - name: Review demo upgrade (fails on High/Critical, which is expected for the fixture)
         run: |
           set +e

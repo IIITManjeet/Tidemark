@@ -64,8 +64,8 @@ anyone be worried?**
 | Watcher (planned) | Subscribes to loader `Upgrade` and multisig proposals; snapshots ProgramData before it is overwritten | Rust, Geyser/gRPC |
 | Explainer (planned) | Turns structured findings into a short plain-English summary | LLM with strict JSON schema |
 | Isolated runner (planned) | Parses untrusted binaries with no network, read-only FS, minimal syscalls | Linux namespaces, distroless image |
-| Web app (planned) | Diff viewer, attestation feed, authority census | Next.js, wallet adapter |
-| Distribution | npm package (shipped), VS Code extension (planned) | WASM build of core |
+| Web app | Diff viewer and attestation feed, verified in the browser | Next.js, TypeScript, Tailwind, WASM core |
+| Distribution | npm package and VS Code extension | WASM build of core |
 
 ## 5. Key flows
 
