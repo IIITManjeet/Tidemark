@@ -405,8 +405,8 @@ pub const MAX_CONST_WINDOWS: usize = 1 << 16;
 
 fn mask_addresses(data: &[u8], image_end: u64) -> Vec<u8> {
     let mut out = data.to_vec();
-    for w in out.chunks_exact_mut(8) {
-        let v = u64::from_le_bytes(w.try_into().expect("8 bytes"));
+    for w in out.as_chunks_mut::<8>().0 {
+        let v = u64::from_le_bytes(*w);
         if v != 0 && is_address(v, image_end) {
             w.fill(0);
         }
