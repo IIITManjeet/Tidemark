@@ -127,15 +127,22 @@ export function timelock(secs: number): string {
   return `${secs}s`;
 }
 
-export function decodeSquads(data: Uint8Array): Squads {
+const MULTISIG_DISC = [0xe0, 0x74, 0x79, 0xba, 0x44, 0xa1, 0x4f, 0xec];
+
+export function decodeSquads(data: Uint8Array): Squads | null {
+  if (data.length < 99 || MULTISIG_DISC.some((b, i) => data[i] !== b)) return null;
   const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const threshold = v.getUint16(72, true);
   const timeLock = v.getUint32(74, true);
   let at = 94;
-  at += v.getUint8(at) === 1 ? 33 : 1;
+  const rc = v.getUint8(at);
+  if (rc > 1) return null;
+  at += rc === 1 ? 33 : 1;
   at += 1;
+  if (at + 4 > data.length) return null;
   const count = v.getUint32(at, true);
   at += 4;
+  if (at + count * 33 > data.length) return null;
   let voters = 0;
   for (let i = 0; i < count; i++) if (v.getUint8(at + i * 33 + 32) & 2) voters++;
   return { threshold, voters, timeLock };
@@ -203,7 +210,9 @@ export async function survey(url: string, program: string, squads: string[]): Pr
       const msAcc = ms ? await account(url, ms) : null;
       if (ms && msAcc?.owner === SQUADS_V4) {
         const s = decodeSquads(msAcc.data);
-        e.control = `multisig (Squads v4, ${s.threshold} of ${s.voters}, ${timelock(s.timeLock)} timelock)`;
+        e.control = s
+          ? `multisig (Squads v4, ${s.threshold} of ${s.voters}, ${timelock(s.timeLock)} timelock)`
+          : "multisig (Squads v4)";
       }
     }
   } catch (err) {
