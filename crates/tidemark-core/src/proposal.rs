@@ -77,6 +77,9 @@ pub fn parse_vault_transaction(data: &[u8]) -> Result<Vec<Upgrade>> {
         let program_id = r.u8()? as usize;
         let accounts = r.bytes()?;
         let ix_data = r.bytes()?;
+        if program_id >= keys.len() && ix_data.get(..4) == Some(&UPGRADE_TAG[..]) {
+            bail!("an instruction's program comes from an address lookup table, which is not read yet");
+        }
         if keys.get(program_id) != Some(&loader) || ix_data.get(..4) != Some(&UPGRADE_TAG[..]) {
             continue;
         }
@@ -180,6 +183,17 @@ mod tests {
             vault_transaction_discriminator(),
             &keys,
             &[(0, &[0, 5, 6], &[3, 0, 0, 0])],
+        );
+        assert!(parse_vault_transaction(&data).is_err());
+    }
+
+    #[test]
+    fn refuses_an_upgrade_from_a_lookup_table() {
+        let keys = [[7u8; 32]];
+        let data = build(
+            vault_transaction_discriminator(),
+            &keys,
+            &[(3, &[0, 0, 0], &[3, 0, 0, 0])],
         );
         assert!(parse_vault_transaction(&data).is_err());
     }
