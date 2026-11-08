@@ -41,7 +41,7 @@ for (const e of v.entries) console.log(e.index, e.risk, e.final, e.deployed_slot
           [<C key="1">review(old, new)</C>, "{ report, report_hash, verdict_hash, verdict_risk }"],
           [<C key="2">inspect(bytes)</C>, "sha256, size, SBPF version, syscalls, instruction handlers"],
           [<C key="3">verifyLedger(input)</C>, "chain status for raw ledger accounts"],
-          [<C key="4">rulesVersion()</C>, "the rules version, e.g. tm-rules-0.6"],
+          [<C key="4">rulesVersion()</C>, "the rules version, e.g. tm-rules-0.7"],
         ]}
       />
       <P>

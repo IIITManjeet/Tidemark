@@ -267,7 +267,7 @@ const STEPS = [
     label: "Step three",
     title: "Rules rank the risk",
     body: "Deterministic rules flag new keys, neutralized checks, new handlers and CPIs. Every honest reviewer gets the same verdict hash.",
-    tag: "tm-rules-0.6",
+    tag: "tm-rules-0.7",
     Scene: RiskScene,
   },
   {

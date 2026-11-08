@@ -101,7 +101,7 @@ its upper half is a VM region (1 to 4). Everything else is a constant and is
 compared as-is. Alongside each line the loader keeps a `Flow` record: the
 absolute branch or internal-call target and the constant, if any.
 
-### 2.3 Rules (`diff.rs`, `tm-rules-0.6`)
+### 2.3 Rules (`diff.rs`, `tm-rules-0.7`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
@@ -116,6 +116,7 @@ absolute branch or internal-call target and the constant, if any.
 | TM-CALLX-ADD | more `callx` sites | Medium |
 | TM-BRANCH-RETARGET | an aligned branch whose target no longer maps to the old target (see below) | High |
 | TM-CALL-RETARGET | same, for internal calls | High |
+| TM-TARGET-SWAP | retargets that only trade places with each other (a permutation), typical of compiler reordering; a retarget whose new target runs the same code as the old one is not reported | Medium |
 | TM-KEY-SPLIT | 4+ new constants with 6+ distinct bytes each within 256 instructions | High |
 | TM-CONST-CHANGE | constants present in old and missing in new, excluding handler discriminators | Medium |
 | TM-CONST-ADD | constants only added, excluding discriminators and new key limbs | Low |
