@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DEMO_PROGRAM, LEDGER_V2, REGISTRY_V2, REPO, RULES, explorer } from "@/lib/site";
+import { DEMO_PROGRAM, LEDGER_V3, REGISTRY_V3, REPO, RULES, UPGRADE_MULTISIG, explorer } from "@/lib/site";
 import { HeroArt, Icon, SolMark, type IconName } from "./art";
 import { HowItWorks } from "./HowItWorks";
 
@@ -180,8 +180,9 @@ export function Landing() {
             </span>
             <h2 className="mt-3 text-3xl font-semibold sm:text-4xl">A real upgrade, reviewed and co-signed</h2>
             <p className="mt-4 text-muted">
-              A demo vault was upgraded on devnet to a build with a hidden sweep. Reviewer one attested HIGH, reviewer two
-              re-ran the review independently and co-signed. Anyone can check the chain.
+              A demo vault was upgraded on devnet to a build with a hidden sweep. Reviewer one attested HIGH and the ledger
+              checked on chain that the deployed bytes match the reviewed build. Reviewer two re-ran the review
+              independently and co-signed. The ledger's own upgrade key sits behind a Squads multisig with a timelock.
             </p>
             <Link href="/app#ledger" className="mt-6 inline-block rounded-xl bg-panel-2 px-5 py-2.5 text-sm font-medium hover:bg-line">
               Verify it in your browser
@@ -189,9 +190,10 @@ export function Landing() {
           </div>
           <div className="card divide-y divide-line/70 font-mono text-[13px]">
             {[
-              ["Ledger program", LEDGER_V2],
-              ["Registry", REGISTRY_V2],
+              ["Ledger program (v3)", LEDGER_V3],
+              ["Registry, 2 of 2 reviewers", REGISTRY_V3],
               ["Upgraded program", DEMO_PROGRAM],
+              ["Ledger upgrade multisig (Squads, 1 h timelock)", UPGRADE_MULTISIG],
             ].map(([k, v]) => (
               <a key={k} href={explorer(v)} target="_blank" rel="noopener" className="flex flex-col gap-1 px-5 py-4 hover:bg-panel-2/60">
                 <span className="font-sans text-xs text-faint">{k}</span>

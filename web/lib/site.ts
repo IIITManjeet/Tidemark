@@ -3,6 +3,8 @@ export const ISSUES = `${REPO}/issues`;
 export const LEDGER_V2 = "BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc";
 export const REGISTRY_V2 = "72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU";
 export const LEDGER_V3 = "8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6";
+export const REGISTRY_V3 = "GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v";
+export const UPGRADE_MULTISIG = "8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9";
 export const DEMO_PROGRAM = "5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3";
 export const RULES = "tm-rules-0.7";
 

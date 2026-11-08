@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 import { fetchLedger, sameChain, short } from "@/lib/ledger";
+import { LEDGER_V3, REGISTRY_V3 } from "@/lib/site";
 import { RISKS, type Ledger } from "@/lib/types";
 import { Button, ErrorNote, Headline, Hero, Sev, Stat, Summary } from "./ui";
 
 const DEFAULTS = {
   rpc: "https://api.devnet.solana.com",
   rpc2: "",
-  ledger: "BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc",
-  registry: "72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU",
+  ledger: LEDGER_V3,
+  registry: REGISTRY_V3,
 };
 
 const explorer = (key: string) => `https://explorer.solana.com/address/${key}?cluster=devnet`;
