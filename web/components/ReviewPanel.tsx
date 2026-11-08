@@ -5,6 +5,7 @@ import { asset, review } from "@/lib/engine";
 import { short } from "@/lib/ledger";
 import type { Hunk, Review } from "@/lib/types";
 import { Drop, type Picked } from "./Drop";
+import { JudgePanel } from "./JudgePanel";
 import { Button, ErrorNote, Headline, Hero, SectionTitle, Sev, Stat, Summary } from "./ui";
 
 const DEMO = ["demo_vault_v1.so", "demo_vault_v2.so"] as const;
@@ -85,6 +86,8 @@ function Result({ r }: { r: Review }) {
           <HunkView key={i} hunk={h} open={i < 2} />
         ))}
       </div>
+
+      <JudgePanel key={r.verdict_hash} report={rep} />
     </div>
   );
 }

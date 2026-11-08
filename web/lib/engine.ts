@@ -5,6 +5,8 @@ interface Wasm {
   review(old: Uint8Array, next: Uint8Array): string;
   rulesVersion(): string;
   verifyLedger(input: string): string;
+  judgeRequests(report: string): string;
+  judge(report: string, backend: string, answers: string): string;
 }
 
 export const asset = (path: string) => `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/${path}`;

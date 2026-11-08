@@ -64,3 +64,23 @@ export interface Ledger {
   };
   entries: Entry[];
 }
+
+export interface Tally {
+  id: string;
+  question: string;
+  yes: number;
+  no: number;
+  dropped: number;
+  failed: number;
+  cites: string[];
+  errors: string[];
+}
+
+export interface Judgement {
+  backend: string;
+  explanation: string | null;
+  explanation_error: string | null;
+  questions: Tally[];
+  risk_before: Risk;
+  risk_after: Risk;
+}
