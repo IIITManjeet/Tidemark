@@ -205,7 +205,7 @@ then freezing the program. `verify-ledger` prints the ledger's upgrade authority
 and warns if it was redeployed after entries were written.
 
 ### 4. CI gate for safe code shipping · Shipped
-`tidemark diff` exits with code `2` when the risk reaches the `--fail-on` level
+`tidemark diff` (and `tidemark proposal`) exits with code `2` when the risk reaches the `--fail-on` level
 (`high` by default), so a pipeline can block risky upgrades automatically. Use
 `--fail-on medium` to also stop on a new instruction handler or indirect call.
 An unknown level is a usage error (exit `1`), never a silent pass. This repo's own
@@ -345,9 +345,13 @@ flags a swap by one fee payer, a same-direction swap by someone else on the same
 pool, then the first fee payer swapping back, all in one slot. It prints each
 detection with the three signatures and the front-runner's raw gain, then a
 Merkle root over the detections so a list can be committed to later. Swaps are
-read from token balance changes, so multi-hop routes, native-SOL legs and
-attackers that split signers are missed, and a market maker trading both sides
-of retail flow can be flagged. Publishing the daily root to the ledger is
+read from token balance changes, with the fee payer's native SOL counted as
+wrapped SOL and SOL amounts taken from the pool's side. Multi-hop routes and
+attackers that split signers are missed, a market maker trading both sides of
+retail flow can be flagged, and each victim is its own detection. Slots the
+cluster skipped are listed; a block the node can't serve stops the scan rather
+than leaving a gap in the root. On mainnet slot 466953008 it finds a real
+sandwich: one attacker, three victims, about 1.72 SOL gained. Publishing the daily root to the ledger is
 still on the roadmap.
 
 ### 13. Isolated analysis runner · Shipped (Linux limits), partly roadmap
@@ -542,6 +546,10 @@ cargo run -p tidemark-cli -- watch <PROGRAM_ID>          # review every upgrade 
 | `attest --program ID --old SNAPSHOT` | Review the deployed upgrade and publish the verdict |
 | `approve --registry R --index N --old SNAPSHOT` | Re-run a published review and co-sign if it matches |
 | `verify-ledger --registry R [--rpc URL]...` | Check chain, reviewers, approvals and PDAs |
+| `proposal --multisig MS --index N` | Review a pending Squads v4 upgrade proposal before approving |
+| `census PROGRAM... [--squads MS]` | Who can upgrade each program, with Squads threshold and timelock |
+| `watch PROGRAM [--ws URL]` | Review every upgrade as it lands (websocket plus polling) |
+| `sandwich --slot N [--to M]` | Scan slots for sandwich attacks and print a Merkle root |
 
 Chain commands take `--keypair` (the signer) and an optional `--payer`.
 
