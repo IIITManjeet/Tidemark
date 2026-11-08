@@ -45,6 +45,13 @@ export default function Page() {
       <H2 id="census">Who can upgrade it?</H2>
       <Code>{`tidemark census --rpc https://api.mainnet-beta.solana.com <PROGRAM_ID>...`}</Code>
       <P>Classifies each program as immutable, single key, multisig or governance, or program-controlled.</P>
+      <P>
+        A Squads v4 vault is a plain system account, so name its multisig with <C>--squads MULTISIG</C> (repeatable).
+        Census derives that multisig&apos;s vaults and reports <C>multisig (Squads v4)</C> when one of them holds the
+        upgrade authority.
+      </P>
+      <Code>{`tidemark census 8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6 \
+  --squads 8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9`}</Code>
 
       <H2 id="ledger">Ledger commands</H2>
       <DocTable

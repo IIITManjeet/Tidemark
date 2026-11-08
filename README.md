@@ -271,14 +271,23 @@ program and whether it embeds a `security.txt`:
 - **multisig / governance**: the authority account is owned by Squads v3/v4
   or SPL Governance
 - **program-controlled (PDA)**: the authority is off the ed25519 curve, so no
-  private key exists and only a program can sign. Squads v4 vaults show up
-  this way, since a vault PDA is a plain system account.
+  private key exists and only a program can sign. A Squads v4 vault is a plain
+  system account, so it shows up this way unless you name its multisig with
+  `--squads <MULTISIG>`: census derives that multisig's vaults and, when one is
+  the authority and the multisig is owned by Squads v4, reports
+  **multisig (Squads v4)** with the multisig and vault index.
 
 ```
 $ tidemark census --rpc https://api.mainnet-beta.solana.com JUP6Lkb… whirLbM… MarBmsS…
 JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4   program-controlled (PDA)   no
 whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc   program-controlled (PDA)   no
 MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD   program-controlled (PDA)   yes
+```
+
+```
+$ tidemark census 8f43wqFP… BFZg7MYz… --squads 8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9
+8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6  multisig (Squads v4)  no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
+BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc  multisig (Squads v4)  no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
 ```
 
 Reading multisig thresholds and timelocks, verified-build status and a public

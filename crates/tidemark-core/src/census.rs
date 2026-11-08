@@ -1,4 +1,4 @@
-use crate::submit::{decode_pubkey, on_curve};
+use crate::submit::{decode_pubkey, find_pda, on_curve};
 use serde::Serialize;
 
 pub const SQUADS_V4: &str = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf";
@@ -18,6 +18,7 @@ pub enum Control {
     Immutable,
     SingleKey,
     Multisig { program: String },
+    SquadsVault { multisig: String, index: u8 },
     Governance,
     ProgramControlled { owner: Option<String> },
 }
@@ -29,6 +30,7 @@ impl Control {
             Control::SingleKey => "single key".into(),
             Control::Multisig { program } if program == SQUADS_V4 => "multisig (Squads v4)".into(),
             Control::Multisig { .. } => "multisig (Squads v3)".into(),
+            Control::SquadsVault { .. } => "multisig (Squads v4)".into(),
             Control::Governance => "governance (SPL Governance)".into(),
             Control::ProgramControlled { owner: Some(o) } => {
                 format!("program-controlled (owner {o})")
@@ -55,6 +57,31 @@ pub fn classify(authority: Option<&str>, authority_owner: Option<&str>) -> anyho
     })
 }
 
+pub const SQUADS_VAULTS_CHECKED: u8 = 8;
+
+pub fn squads_v4_vault(multisig: &str, index: u8) -> anyhow::Result<String> {
+    let ms = decode_pubkey(multisig)?;
+    let (vault, _) = find_pda(
+        &[b"multisig", &ms, b"vault", &[index]],
+        &decode_pubkey(SQUADS_V4)?,
+    )?;
+    Ok(crate::bs58_encode(&vault))
+}
+
+pub fn squads_vault_of(
+    authority: &str,
+    multisigs: &[String],
+) -> anyhow::Result<Option<(String, u8)>> {
+    for ms in multisigs {
+        for index in 0..SQUADS_VAULTS_CHECKED {
+            if squads_v4_vault(ms, index)? == authority {
+                return Ok(Some((ms.clone(), index)));
+            }
+        }
+    }
+    Ok(None)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Entry {
     pub program: String,
@@ -76,7 +103,7 @@ fn owner_of(rpc: &str, key: &str) -> anyhow::Result<Option<String>> {
 }
 
 #[cfg(feature = "net")]
-pub fn survey(rpc: &str, program: &str) -> Entry {
+pub fn survey(rpc: &str, program: &str, squads: &[String]) -> Entry {
     let mut e = Entry {
         program: program.to_string(),
         control: Control::Immutable,
@@ -101,6 +128,13 @@ pub fn survey(rpc: &str, program: &str) -> Entry {
             None => None,
         };
         e.control = classify(d.upgrade_authority.as_deref(), auth_owner.as_deref())?;
+        if let (Control::ProgramControlled { .. }, Some(a)) = (&e.control, &d.upgrade_authority) {
+            if let Some((multisig, index)) = squads_vault_of(a, squads)? {
+                if owner_of(rpc, &multisig)?.as_deref() == Some(SQUADS_V4) {
+                    e.control = Control::SquadsVault { multisig, index };
+                }
+            }
+        }
         e.authority = d.upgrade_authority;
         Ok(())
     };
@@ -116,6 +150,18 @@ mod tests {
 
     const WALLET: &str = "9fxLpiKzK1zeF42911g5ruKDdTuJFduJSEXcZHh4mCB1";
     const PDA: &str = "72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU";
+
+    #[test]
+    fn squads_vault_is_derived_from_its_multisig() {
+        let ms = "8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9";
+        let vault = "GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2";
+        assert_eq!(squads_v4_vault(ms, 0).unwrap(), vault);
+        assert_eq!(
+            squads_vault_of(vault, &[WALLET.to_string(), ms.to_string()]).unwrap(),
+            Some((ms.to_string(), 0))
+        );
+        assert_eq!(squads_vault_of(PDA, &[ms.to_string()]).unwrap(), None);
+    }
 
     #[test]
     fn no_authority_is_immutable() {
