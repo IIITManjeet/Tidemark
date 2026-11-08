@@ -7,11 +7,15 @@ use tidemark_core::diff::{self, Report, Severity};
 use tidemark_core::submit::{self, Ctx, Pubkey};
 use tidemark_core::{elf, ledger, rpc, verdict_hash, verdict_risk};
 
+mod isolate;
+
 macro_rules! out {
     ($($t:tt)*) => {{
         let _ = writeln!(std::io::stdout(), $($t)*);
     }};
 }
+
+mod ws;
 
 const DEVNET: &str = "https://api.devnet.solana.com";
 const DEFAULT_KEYPAIR: &str = "~/.config/solana/id.json";
@@ -65,7 +69,14 @@ enum Cmd {
             help = "Ask an AI jury about the findings (needs GEMINI_KEY); advisory, never part of the verdict hash"
         )]
         judge: bool,
+        #[arg(
+            long,
+            help = "Parse and diff the binaries in a locked-down child process (resource limits and Landlock on Linux)"
+        )]
+        isolate: bool,
     },
+    #[command(hide = true, name = "__review")]
+    Review,
     #[command(about = "Summarize one program binary")]
     Inspect { file: PathBuf },
     #[command(about = "Download deployed bytecode and show its upgrade authority")]
@@ -89,6 +100,13 @@ enum Cmd {
         dir: PathBuf,
         #[arg(long, default_value_t = 30, help = "Seconds between checks")]
         interval: u64,
+        #[arg(
+            long,
+            help = "Websocket URL to wake on ProgramData changes (derived from --rpc by default)"
+        )]
+        ws: Option<String>,
+        #[arg(long, help = "Poll only; do not open a websocket")]
+        no_ws: bool,
         #[arg(long, help = "Check once and exit")]
         once: bool,
         #[arg(long, help = "Attest each review to this tidemark-ledger program")]
@@ -100,6 +118,25 @@ enum Cmd {
         registry: Option<String>,
         #[arg(long, default_value = DEFAULT_KEYPAIR)]
         keypair: String,
+    },
+    #[command(about = "Review a Squads v4 upgrade proposal before approving it")]
+    Proposal {
+        #[arg(long, help = "Squads v4 multisig address")]
+        multisig: String,
+        #[arg(long, help = "Transaction index of the proposal")]
+        index: u64,
+        #[arg(long, default_value = DEVNET)]
+        rpc: String,
+        #[arg(long, help = "Write the JSON report here")]
+        json: Option<PathBuf>,
+        #[arg(long, default_value_t = 4, help = "Code hunks to print")]
+        hunks: usize,
+        #[arg(
+            long,
+            default_value = "high",
+            help = "Exit with code 2 when risk reaches this level (info, low, medium, high, critical)"
+        )]
+        fail_on: String,
     },
     #[command(about = "Classify who can upgrade each program")]
     Census {
@@ -437,6 +474,7 @@ fn main() -> Result<()> {
             fail_on,
             cache,
             judge,
+            isolate,
         } => {
             let gate = Severity::parse(&fail_on)?;
             let (a, b) = (read(&old)?, read(&new)?);
@@ -448,8 +486,14 @@ fn main() -> Result<()> {
             let e = match hit {
                 Some(e) => e,
                 None => {
-                    let r = diff::compare(&elf::load(&a)?, &elf::load(&b)?);
-                    let e = tidemark_core::cache::entry(&r);
+                    let e = if isolate {
+                        isolate::review(&a, &b)?
+                    } else {
+                        tidemark_core::cache::entry(&diff::compare(
+                            &elf::load(&a)?,
+                            &elf::load(&b)?,
+                        ))
+                    };
                     if let Some(d) = &cache {
                         tidemark_core::cache::put(d, &sa, &sb, &e)?;
                     }
@@ -495,6 +539,7 @@ fn main() -> Result<()> {
                 std::process::exit(2);
             }
         }
+        Cmd::Review => isolate::child()?,
         Cmd::Inspect { file } => {
             let p = elf::load(&read(&file)?)?;
             out!("sha256         {}", p.sha256);
@@ -530,11 +575,66 @@ fn main() -> Result<()> {
             );
             out!("wrote {} bytes to {}", d.elf.len(), out.display());
         }
+        Cmd::Proposal {
+            multisig,
+            index,
+            rpc: url,
+            json,
+            hunks,
+            fail_on,
+        } => {
+            let gate = Severity::parse(&fail_on)?;
+            let tx = tidemark_core::proposal::transaction_address(&multisig, index)?;
+            let (data, owner) = rpc::fetch_account(&url, &tx)?;
+            if owner != tidemark_core::census::SQUADS_V4 {
+                bail!("{tx} is not owned by Squads v4 (owner {owner})");
+            }
+            let upgrades = tidemark_core::proposal::parse_vault_transaction(&data)?;
+            if upgrades.is_empty() {
+                bail!("proposal #{index} on {multisig} contains no program upgrade");
+            }
+            let mut worst = Severity::Info;
+            for (i, u) in upgrades.iter().enumerate() {
+                if i > 0 {
+                    out!("");
+                }
+                out!(
+                    "proposal #{index} on {multisig}: upgrade {} from buffer {}",
+                    u.program,
+                    u.buffer
+                );
+                let live = rpc::fetch(&url, &u.program)?;
+                let (new, buffer_authority) = rpc::fetch_buffer(&url, &u.buffer)?;
+                out!(
+                    "  buffer authority  {}",
+                    buffer_authority.as_deref().unwrap_or("none")
+                );
+                let r = diff::compare(&elf::load(&live.elf)?, &elf::load(&new)?);
+                print_report(&r, hunks);
+                out!("\nverdict hash  {}", verdict_hash(&r));
+                out!("report hash   {}", tidemark_core::report_hash(&r));
+                worst = worst.max(r.risk);
+                if let Some(p) = &json {
+                    let p = if upgrades.len() == 1 {
+                        p.clone()
+                    } else {
+                        p.with_extension(format!("{i}.json"))
+                    };
+                    std::fs::write(&p, serde_json::to_string_pretty(&r)?)?;
+                    out!("JSON report written to {}", p.display());
+                }
+            }
+            if worst >= gate {
+                std::process::exit(2);
+            }
+        }
         Cmd::Watch {
             program,
             rpc: url,
             dir,
             interval,
+            ws: ws_url,
+            no_ws,
             once,
             attest,
             registry,
@@ -558,6 +658,17 @@ fn main() -> Result<()> {
                 }),
                 _ => None,
             };
+            let mut sock = if once || no_ws {
+                None
+            } else {
+                match ws_url.map_or_else(|| ws::derive_url(&url), Ok) {
+                    Ok(u) => Some(ws::Watcher::new(u, url.clone(), program.clone())),
+                    Err(e) => {
+                        eprintln!("{program}: websocket disabled: {e:#}");
+                        None
+                    }
+                }
+            };
             loop {
                 let target = match (&c, &k, reg) {
                     (Some(c), Some(k), Some(r)) => Some((c, &k.signer, r)),
@@ -571,7 +682,11 @@ fn main() -> Result<()> {
                 if once {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_secs(interval.max(5)));
+                let wait = std::time::Duration::from_secs(interval.max(5));
+                match sock.as_mut() {
+                    Some(w) => w.wait(wait),
+                    None => std::thread::sleep(wait),
+                }
             }
         }
         Cmd::Census {
@@ -601,7 +716,7 @@ fn main() -> Result<()> {
                 out!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
                 out!(
-                    "{:<44}  {:<28}  {:<10}  {}",
+                    "{:<44}  {:<46}  {:<7}  {}",
                     "program",
                     "upgrade control",
                     "sec.txt",
@@ -613,7 +728,7 @@ fn main() -> Result<()> {
                         None => r.control.label(),
                     };
                     out!(
-                        "{:<44}  {:<28}  {:<10}  {}",
+                        "{:<44}  {:<46}  {:<7}  {}",
                         r.program,
                         control,
                         if r.security_txt { "yes" } else { "no" },
