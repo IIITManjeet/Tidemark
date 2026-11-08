@@ -46,12 +46,16 @@ export interface Entry {
   slot: number;
   verdict_hash: string;
   entry_hash: string;
+  deployed_slot: number | null;
+  late_approvals: number;
 }
 
 export interface Ledger {
   ok: boolean;
   error?: string;
   registry: {
+    layout: string;
+    config_version: number;
     authority: string;
     head: string;
     count: number;

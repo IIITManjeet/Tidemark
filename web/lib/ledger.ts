@@ -1,7 +1,10 @@
 import { engine } from "./engine";
 import type { Ledger } from "./types";
 
-const SIZES = { attestation: 332, reviewer: 82, approval: 81 };
+const LAYOUTS: Record<number, { attestation: number; reviewer: number; approval: number; approvalsByRegistry: boolean }> = {
+  148: { attestation: 332, reviewer: 82, approval: 81, approvalsByRegistry: false },
+  188: { attestation: 380, reviewer: 82, approval: 145, approvalsByRegistry: true },
+};
 
 interface Raw {
   address: string;
@@ -37,10 +40,12 @@ export async function fetchLedger(url: string, ledger: string, registry: string)
   ]);
   if (!info.value) throw new Error(`registry ${registry} not found`);
   if (info.value.owner !== ledger) throw new Error(`registry ${registry} is not owned by ${ledger}`);
+  const sizes = LAYOUTS[atob(info.value.data[0]).length];
+  if (!sizes) throw new Error(`registry ${registry} has an unknown layout`);
   const [attestations, reviewers, approvals] = await Promise.all([
-    accounts(url, ledger, SIZES.attestation, registry),
-    accounts(url, ledger, SIZES.reviewer, registry),
-    accounts(url, ledger, SIZES.approval),
+    accounts(url, ledger, sizes.attestation, registry),
+    accounts(url, ledger, sizes.reviewer, registry),
+    accounts(url, ledger, sizes.approval, sizes.approvalsByRegistry ? registry : undefined),
   ]);
   const input = JSON.stringify({
     ledger,

@@ -235,6 +235,7 @@ fn ctx<'a>(c: &'a Chain, k: &'a Keys) -> Result<Ctx<'a>> {
     Ok(Ctx {
         url: &c.rpc,
         ledger: submit::decode_pubkey(&c.ledger)?,
+        layout: ledger::layout_for(&c.ledger),
         payer: &k.payer,
     })
 }
@@ -289,10 +290,14 @@ fn print_value(r: &serde_json::Value, hunks: usize) {
 }
 
 fn review_deployed(rpc_url: &str, program: &str, old: &PathBuf) -> Result<Report> {
+    Ok(review_deployed_at(rpc_url, program, old)?.0)
+}
+
+fn review_deployed_at(rpc_url: &str, program: &str, old: &PathBuf) -> Result<(Report, u64)> {
     let deployed = rpc::fetch(rpc_url, program)?;
     let o = elf::load(&read(old)?)?;
     let n = elf::load(&deployed.elf)?;
-    Ok(diff::compare(&o, &n))
+    Ok((diff::compare(&o, &n), deployed.last_deploy_slot))
 }
 
 fn rules16(v: &str) -> [u8; 16] {
@@ -304,8 +309,7 @@ fn rules16(v: &str) -> [u8; 16] {
 
 fn print_judgement(j: &tidemark_core::judge::Judgement) {
     out!(
-        "
-AI judge ({}), advisory: not part of the verdict hash or any attestation",
+        "\nAI judge ({}), advisory: not part of the verdict hash or any attestation",
         j.backend
     );
     if let Some(e) = &j.explanation {
@@ -372,6 +376,7 @@ fn attest_report(
         risk: verdict_risk(r),
         rules_version: rules16(r.rules_version),
         model_id: [0u8; 32],
+        elf_len: u32::try_from(r.new.size).context("program too large")?,
     };
     let (att, index, sig) = c.attest(signer, registry, &input)?;
     out!("\nattestation  #{index} {}", b58(&att));
@@ -457,8 +462,7 @@ fn main() -> Result<()> {
             if judge {
                 match tidemark_core::judge::gemini::Gemini::from_env() {
                     None => out!(
-                        "
-AI judge skipped: set {} in the environment to use --judge",
+                        "\nAI judge skipped: set {} in the environment to use --judge",
                         tidemark_core::judge::gemini::KEY_VAR
                     ),
                     Some(g) => {
@@ -688,8 +692,16 @@ AI judge skipped: set {} in the environment to use --judge",
                 .iter()
                 .find(|a| a.index == index)
                 .with_context(|| format!("entry #{index} not found in {registry}"))?;
-            let r = review_deployed(&chain.rpc, &b58(&a.program), &old)?;
+            let (r, slot) = review_deployed_at(&chain.rpc, &b58(&a.program), &old)?;
             let mine = tidemark_core::parse_hash32(&verdict_hash(&r))?;
+            if let Some(d) = &a.deploy {
+                if d.deployed_slot != slot {
+                    bail!(
+                        "entry #{index} was attested against the deploy at slot {}, but the program was redeployed at slot {slot}; not approving",
+                        d.deployed_slot
+                    );
+                }
+            }
             if hex(&a.old_code_hash) != r.old.sha256 || hex(&a.new_code_hash) != r.new.sha256 {
                 bail!("entry #{index} reviewed different code than your snapshot and the deployed program");
             }
@@ -709,7 +721,11 @@ AI judge skipped: set {} in the environment to use --judge",
                     hex(&a.report_hash)
                 );
             }
-            let sig = c.approve(&k.signer, reg, index, mine)?;
+            let bound = match snap.registry.layout {
+                ledger::Layout::V2 => mine,
+                ledger::Layout::V3 => ledger::approval_digest(&a.entry_hash),
+            };
+            let sig = c.approve(&k.signer, reg, index, bound)?;
             out!(
                 "approved #{index}: independent review matches {}\ntx {sig} (confirmed)",
                 hex(&mine)
@@ -725,8 +741,37 @@ AI judge skipped: set {} in the environment to use --judge",
             for (n, url) in rpcs.iter().enumerate() {
                 let s = ledger::fetch(url, &program, &registry)?;
                 if n == 0 {
-                    out!("registry   {registry}");
+                    out!("registry   {registry} ({:?})", s.registry.layout);
                     out!("authority  {}", b58(&s.registry.authority));
+                    if s.registry.layout == ledger::Layout::V3 {
+                        out!(
+                            "config     version {} (bumps on every reviewer, threshold or authority change)",
+                            s.registry.config_version
+                        );
+                    }
+                    match rpc::fetch(url, &program) {
+                        Ok(d) => {
+                            let who = d
+                                .upgrade_authority
+                                .as_deref()
+                                .map_or("none (frozen)".to_string(), |a| a.to_string());
+                            out!(
+                                "ledger     {program} upgrade authority {who}, last deployed at slot {}",
+                                d.last_deploy_slot
+                            );
+                            let first = s.attestations.iter().map(|a| a.slot).min();
+                            if let Some(first) = first.filter(|f| d.last_deploy_slot > *f) {
+                                out!(
+                                    "  warning: the ledger program was redeployed at slot {} after entries were written (first at {first}); its new code can rewrite them",
+                                    d.last_deploy_slot
+                                );
+                            }
+                            if d.upgrade_authority.is_some() {
+                                out!("  note: whoever holds the ledger's upgrade authority can change its rules");
+                            }
+                        }
+                        Err(e) => out!("ledger     could not read the ledger program: {e:#}"),
+                    }
                     out!(
                         "threshold  {} of {} active reviewers",
                         s.registry.threshold,
@@ -749,8 +794,20 @@ AI judge skipped: set {} in the environment to use --judge",
                                     .iter()
                                     .find(|x| x.index == st.index)
                                     .expect("entry");
+                                let deployed = a
+                                    .deploy
+                                    .map(|d| format!("  deployed@{}", d.deployed_slot))
+                                    .unwrap_or_default();
+                                let late = if st.late_approvals > 0 {
+                                    format!(
+                                        "  ({} by reviewers added after this entry)",
+                                        st.late_approvals
+                                    )
+                                } else {
+                                    String::new()
+                                };
                                 out!(
-                                    "  #{:<3} slot {:<10} risk {}  program {}  by {}  {}/{} {}",
+                                    "  #{:<3} slot {:<10} risk {}  program {}  by {}  {}/{} {}{deployed}{late}",
                                     a.index,
                                     a.slot,
                                     a.risk,

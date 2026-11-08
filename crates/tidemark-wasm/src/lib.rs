@@ -94,6 +94,10 @@ pub fn verify_json(input: &str) -> anyhow::Result<Value> {
         &all(&i.approvals)?,
     )?;
     let verdict = ledger::verify(&program, &snap);
+    let late: std::collections::BTreeMap<u64, u8> = verdict
+        .as_ref()
+        .map(|st| st.iter().map(|e| (e.index, e.late_approvals)).collect())
+        .unwrap_or_default();
     let mut entries = snap.attestations.clone();
     entries.sort_by_key(|a| a.index);
     let entries: Vec<Value> = entries
@@ -114,6 +118,8 @@ pub fn verify_json(input: &str) -> anyhow::Result<Value> {
                 "threshold": a.threshold,
                 "final": a.approvals >= a.threshold,
                 "entry_hash": hex(&a.entry_hash),
+                "deployed_slot": a.deploy.map(|d| d.deployed_slot),
+                "late_approvals": late.get(&a.index).copied().unwrap_or(0),
             })
         })
         .collect();
@@ -123,6 +129,8 @@ pub fn verify_json(input: &str) -> anyhow::Result<Value> {
         "error": verdict.err().map(|e| format!("{e:?}")),
         "registry": {
             "address": bs58_encode(&r.address),
+            "layout": format!("{:?}", r.layout),
+            "config_version": r.config_version,
             "authority": bs58_encode(&r.authority),
             "count": r.count,
             "threshold": r.threshold,

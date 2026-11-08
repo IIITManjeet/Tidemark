@@ -127,6 +127,12 @@ pub struct Compiled {
     pub signers: Vec<Pubkey>,
 }
 
+pub struct Ix<'a> {
+    pub program: Pubkey,
+    pub metas: &'a [Meta],
+    pub data: &'a [u8],
+}
+
 pub fn compile(
     payer: Pubkey,
     program: Pubkey,
@@ -134,19 +140,37 @@ pub fn compile(
     data: &[u8],
     blockhash: Pubkey,
 ) -> Result<Compiled> {
+    compile_many(
+        payer,
+        &[Ix {
+            program,
+            metas,
+            data,
+        }],
+        blockhash,
+    )
+}
+
+pub fn compile_many(payer: Pubkey, ixs: &[Ix], blockhash: Pubkey) -> Result<Compiled> {
     let mut merged: Vec<Meta> = vec![Meta::sw(payer)];
-    for m in metas.iter().chain(std::iter::once(&Meta::r(program))) {
+    let all = ixs.iter().flat_map(|ix| {
+        ix.metas
+            .iter()
+            .copied()
+            .chain(std::iter::once(Meta::r(ix.program)))
+    });
+    for m in all {
         match merged.iter_mut().find(|x| x.key == m.key) {
             Some(x) => {
                 x.signer |= m.signer;
                 x.writable |= m.writable;
             }
-            None => merged.push(*m),
+            None => merged.push(m),
         }
     }
     if merged
         .iter()
-        .any(|m| m.key == program && (m.signer || m.writable))
+        .any(|m| ixs.iter().any(|ix| ix.program == m.key) && (m.signer || m.writable))
     {
         bail!("program id cannot be a signer or writable");
     }
@@ -179,14 +203,16 @@ pub fn compile(
         msg.extend_from_slice(&m.key);
     }
     msg.extend_from_slice(&blockhash);
-    compact_u16(1, &mut msg);
-    msg.push(index(&program));
-    compact_u16(metas.len(), &mut msg);
-    for m in metas {
-        msg.push(index(&m.key));
+    compact_u16(ixs.len(), &mut msg);
+    for ix in ixs {
+        msg.push(index(&ix.program));
+        compact_u16(ix.metas.len(), &mut msg);
+        for m in ix.metas {
+            msg.push(index(&m.key));
+        }
+        compact_u16(ix.data.len(), &mut msg);
+        msg.extend_from_slice(ix.data);
     }
-    compact_u16(data.len(), &mut msg);
-    msg.extend_from_slice(data);
     Ok(Compiled {
         message: msg,
         signers,
@@ -234,23 +260,58 @@ fn confirm(url: &str, sig: &str) -> Result<()> {
     bail!("transaction {sig} was not confirmed within 60 s")
 }
 
+pub const COMPUTE_BUDGET: &str = "ComputeBudget111111111111111111111111111111";
+pub const LOADER_V3: &str = "BPFLoaderUpgradeab1e11111111111111111111111";
+pub const ATTEST_COMPUTE_UNITS: u32 = 1_400_000;
+
+pub fn program_data_address(program: &Pubkey) -> Result<Pubkey> {
+    Ok(find_pda(&[program], &decode_pubkey(LOADER_V3)?)?.0)
+}
+
 #[cfg(feature = "net")]
 pub struct Ctx<'a> {
     pub url: &'a str,
     pub ledger: Pubkey,
+    pub layout: crate::ledger::Layout,
     pub payer: &'a SigningKey,
 }
 
 #[cfg(feature = "net")]
 impl Ctx<'_> {
     fn send(&self, signer: &SigningKey, metas: &[Meta], data: &[u8]) -> Result<String> {
+        self.send_with_budget(signer, metas, data, None)
+    }
+
+    fn send_with_budget(
+        &self,
+        signer: &SigningKey,
+        metas: &[Meta],
+        data: &[u8],
+        units: Option<u32>,
+    ) -> Result<String> {
         let bh = rpc(
             self.url,
             "getLatestBlockhash",
             json!([{"commitment": "confirmed"}]),
         )?;
         let blockhash = decode_pubkey(bh["value"]["blockhash"].as_str().context("no blockhash")?)?;
-        let c = compile(pubkey_of(self.payer), self.ledger, metas, data, blockhash)?;
+        let budget: Vec<u8> = units
+            .map(|u| [&[2u8][..], &u.to_le_bytes()].concat())
+            .unwrap_or_default();
+        let mut ixs = Vec::new();
+        if units.is_some() {
+            ixs.push(Ix {
+                program: decode_pubkey(COMPUTE_BUDGET)?,
+                metas: &[],
+                data: &budget,
+            });
+        }
+        ixs.push(Ix {
+            program: self.ledger,
+            metas,
+            data,
+        });
+        let c = compile_many(pubkey_of(self.payer), &ixs, blockhash)?;
         let tx = sign(&c, &[self.payer, signer])?;
         let b64 = base64::engine::general_purpose::STANDARD.encode(tx);
         let sig = rpc(
@@ -300,7 +361,7 @@ impl Ctx<'_> {
     }
 
     pub fn registry_address(&self, authority: &Pubkey) -> Result<Pubkey> {
-        Ok(find_pda(&[b"registry2", authority], &self.ledger)?.0)
+        Ok(find_pda(&[self.layout.registry_seed(), authority], &self.ledger)?.0)
     }
 
     pub fn reviewer_address(&self, registry: &Pubkey, key: &Pubkey) -> Result<Pubkey> {
@@ -308,7 +369,15 @@ impl Ctx<'_> {
     }
 
     pub fn attestation_address(&self, registry: &Pubkey, index: u64) -> Result<Pubkey> {
-        Ok(find_pda(&[b"attest2", registry, &index.to_le_bytes()], &self.ledger)?.0)
+        Ok(find_pda(
+            &[
+                self.layout.attestation_seed(),
+                registry,
+                &index.to_le_bytes(),
+            ],
+            &self.ledger,
+        )?
+        .0)
     }
 
     pub fn approval_address(&self, attestation: &Pubkey, reviewer: &Pubkey) -> Result<Pubkey> {
@@ -417,25 +486,44 @@ impl Ctx<'_> {
         )?;
         let me = pubkey_of(signer);
         self.require_active_reviewer(&registry, &me)?;
+        if reg.layout != self.layout {
+            bail!(
+                "registry layout {:?} does not match this ledger ({:?})",
+                reg.layout,
+                self.layout
+            );
+        }
         let attestation = self.attestation_address(&registry, reg.count)?;
+        let v3 = self.layout == crate::ledger::Layout::V3;
         let mut d = sighash("attest").to_vec();
-        d.extend_from_slice(&a.program);
+        if !v3 {
+            d.extend_from_slice(&a.program);
+        }
         d.extend_from_slice(&a.old_code_hash);
         d.extend_from_slice(&a.new_code_hash);
         d.extend_from_slice(&a.report_hash);
         d.push(a.risk);
         d.extend_from_slice(&a.rules_version);
         d.extend_from_slice(&a.model_id);
-        let metas = [
+        let mut metas = vec![
             Meta::w(registry),
             Meta::r(self.reviewer_address(&registry, &me)?),
             Meta::w(attestation),
             Meta::w(self.approval_address(&attestation, &me)?),
+        ];
+        if v3 {
+            d.extend_from_slice(&a.elf_len.to_le_bytes());
+            metas.push(Meta::r(a.program));
+            metas.push(Meta::r(program_data_address(&a.program)?));
+        }
+        metas.extend([
             Meta::s(me),
             Meta::sw(pubkey_of(self.payer)),
             Meta::r(SYSTEM_PROGRAM),
-        ];
-        Ok((attestation, reg.count, self.send(signer, &metas, &d)?))
+        ]);
+        let units = v3.then_some(ATTEST_COMPUTE_UNITS);
+        let sig = self.send_with_budget(signer, &metas, &d, units)?;
+        Ok((attestation, reg.count, sig))
     }
 
     pub fn approve(
@@ -443,7 +531,7 @@ impl Ctx<'_> {
         signer: &SigningKey,
         registry: Pubkey,
         index: u64,
-        report_hash: [u8; 32],
+        bound: [u8; 32],
     ) -> Result<String> {
         let me = pubkey_of(signer);
         let attestation = self.attestation_address(&registry, index)?;
@@ -452,7 +540,7 @@ impl Ctx<'_> {
             bail!("you already approved entry #{index}");
         }
         let mut d = sighash("approve").to_vec();
-        d.extend_from_slice(&report_hash);
+        d.extend_from_slice(&bound);
         let metas = [
             Meta::r(registry),
             Meta::r(self.reviewer_address(&registry, &me)?),
@@ -474,6 +562,7 @@ pub struct AttestInput {
     pub risk: u8,
     pub rules_version: [u8; 16],
     pub model_id: [u8; 32],
+    pub elf_len: u32,
 }
 
 #[cfg(test)]
