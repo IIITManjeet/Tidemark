@@ -1,4 +1,5 @@
-import { C, Callout, Code, DocPage, DocTable, H2, P } from "@/components/docs";
+import { C, Code, DocPage, DocTable, H2, P } from "@/components/docs";
+import { NPM } from "@/lib/site";
 
 export const metadata = { title: "npm package · Tidemark docs" };
 
@@ -9,8 +10,15 @@ export default function Page() {
       lead="tidemark-wasm is the review engine compiled to WebAssembly, for wallets, explorers and dashboards. Nothing is uploaded anywhere."
     >
       <H2 id="install">Install</H2>
-      <Callout title="Not on the npm registry yet">Build it from the repository and install the folder.</Callout>
-      <Code>{`bash scripts/build-wasm.sh\nnpm install ./path/to/Tidemark/npm`}</Code>
+      <Code>{`npm install tidemark-wasm`}</Code>
+      <P>
+        Published on npm as{" "}
+        <a href={NPM} className="text-link">
+          tidemark-wasm
+        </a>
+        . In Node, load the engine with <C>initSync</C> and the bundled <C>dist/tidemark_bg.wasm</C>; in the browser,{" "}
+        <C>await init()</C> fetches it next to the module.
+      </P>
 
       <H2 id="review">Review an upgrade</H2>
       <Code title="js">{`import init, { review } from "tidemark-wasm";

@@ -1,4 +1,5 @@
 import { C, Callout, Code, DocPage, DocTable, H2, P, Steps } from "@/components/docs";
+import { RELEASE } from "@/lib/site";
 
 export const metadata = { title: "VS Code extension · Tidemark docs" };
 
@@ -9,9 +10,43 @@ export default function Page() {
       lead="Before you run anchor deploy, compare your local build with what is on chain, without leaving the editor."
     >
       <H2 id="install">Install</H2>
-      <Callout title="Not on the Marketplace yet">
-        The extension runs from source today. A Marketplace listing will follow; the steps below take about a minute.
-      </Callout>
+      <Steps
+        items={[
+          {
+            title: "Download the extension",
+            body: (
+              <>
+                Get <C>tidemark.vsix</C> from the{" "}
+                <a href={RELEASE} className="text-link">
+                  v0.1.0 release
+                </a>
+                .
+              </>
+            ),
+          },
+          {
+            title: "Install it",
+            body: (
+              <>
+                In VS Code, open Extensions, click <C>⋯</C> and choose <C>Install from VSIX…</C>, or run:
+                <Code>{`code --install-extension tidemark.vsix`}</Code>
+                It works the same in Cursor, Windsurf and VSCodium.
+              </>
+            ),
+          },
+          {
+            title: "Run a command",
+            body: (
+              <>
+                Open the command palette (<C>Ctrl+Shift+P</C>) and type <C>Tidemark</C>.
+              </>
+            ),
+          },
+        ]}
+      />
+      <Callout title="Marketplace listing">The Marketplace listing is awaiting review; the release file is the same build.</Callout>
+
+      <H2 id="source">Build from source</H2>
       <Steps
         items={[
           {
@@ -28,14 +63,6 @@ export default function Page() {
             body: (
               <>
                 Open the <C>vscode/</C> folder in VS Code and press <C>F5</C>. A second window starts with Tidemark loaded.
-              </>
-            ),
-          },
-          {
-            title: "Run a command",
-            body: (
-              <>
-                Open the command palette (<C>Ctrl+Shift+P</C>) and type <C>Tidemark</C>.
               </>
             ),
           },

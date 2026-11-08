@@ -1,11 +1,19 @@
 import { C, Callout, Code, DocPage, DocTable, H2, P } from "@/components/docs";
+import { RELEASE } from "@/lib/site";
 
 export const metadata = { title: "Command line · Tidemark docs" };
 
 export default function Page() {
   return (
     <DocPage title="Command line" lead="The tidemark binary reviews upgrades, watches programs and reads and writes the attestation ledger.">
-      <Code>{`cargo install --path crates/tidemark-cli\ntidemark --help`}</Code>
+      <P>
+        Download a prebuilt binary for Linux, macOS or Windows from the{" "}
+        <a href={RELEASE} className="text-link">
+          v0.1.0 release
+        </a>
+        , or build it with Cargo:
+      </P>
+      <Code>{`cargo install --git https://github.com/IIITManjeet/Tidemark tidemark-cli\ntidemark --help`}</Code>
 
       <H2 id="review">Review two builds</H2>
       <Code>{`tidemark diff old.so new.so --json report.json --hunks 4 --fail-on high`}</Code>

@@ -1,5 +1,7 @@
 export const REPO = "https://github.com/IIITManjeet/Tidemark";
 export const ISSUES = `${REPO}/issues`;
+export const RELEASE = `${REPO}/releases/tag/v0.1.0`;
+export const NPM = "https://www.npmjs.com/package/tidemark-wasm";
 export const LEDGER_V2 = "BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc";
 export const REGISTRY_V2 = "72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU";
 export const LEDGER_V3 = "8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6";

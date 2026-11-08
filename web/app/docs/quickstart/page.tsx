@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { C, Code, DocPage, H2, P, Steps } from "@/components/docs";
-import { REPO } from "@/lib/site";
+import { RELEASE, REPO } from "@/lib/site";
 
 export const metadata = { title: "Quickstart · Tidemark docs" };
 
@@ -17,14 +17,19 @@ export default function Page() {
       <Steps
         items={[
           {
-            title: "Install Rust",
+            title: "Get the CLI",
             body: (
               <>
-                Any recent stable toolchain from <a href="https://rustup.rs" className="text-link">rustup.rs</a>.
+                Download it from the{" "}
+                <a href={RELEASE} className="text-link">
+                  v0.1.0 release
+                </a>{" "}
+                and put <C>tidemark</C> on your PATH, or build it with Rust:
+                <Code>{`cargo install --git ${REPO} tidemark-cli`}</Code>
               </>
             ),
           },
-          { title: "Clone and build", body: <Code>{`git clone ${REPO}.git\ncd Tidemark\ncargo install --path crates/tidemark-cli`}</Code> },
+          { title: "Get the demo files", body: <Code>{`git clone ${REPO}.git\ncd Tidemark`}</Code> },
           {
             title: "Review the demo upgrade",
             body: (
