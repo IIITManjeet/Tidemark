@@ -280,7 +280,7 @@ Expensive work runs only when it has to:
    deployments can add KV-cache quantization (TurboQuant-style, about 3–4 bits
    per value) to cut memory further.
 
-### 9. Upgrade watcher with snapshots · Shipped (polling)
+### 9. Upgrade watcher with snapshots · Shipped (websocket and polling)
 `tidemark watch <program>` polls ProgramData and keeps every deployed version
 under `snapshots/<program>/<deploy slot>.so`. When the deploy slot changes it
 reviews the upgrade against the previous snapshot, prints the report and
@@ -294,9 +294,12 @@ $ tidemark watch 5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3
 Tidemark upgrade review  (tm-rules-0.7) …
 ```
 
-The watcher needs to be running before an upgrade to have the old version;
-subscribing to loader `Upgrade` instructions over websockets, so no version
-is missed between polls, is still on the roadmap.
+It also subscribes to the program's ProgramData account over a websocket
+(derived from `--rpc`, or `--ws URL`; `--no-ws` turns it off) and checks as
+soon as the account changes, so an upgrade is reviewed within seconds instead
+of at the next poll. Polling keeps running underneath, and a dropped socket
+reconnects with backoff. The watcher still needs to be running before an
+upgrade to have the old version.
 
 ### 10. Multisig pre-approval review · Shipped (CLI, Squads v4)
 `tidemark proposal --multisig <MS> --index <N>` reads a Squads v4 vault
@@ -376,7 +379,7 @@ blocked yet) and a distroless image.
   Marketplace listing is awaiting review), or build with `bash scripts/build-vscode.sh`.
 - Showing findings inline in the editor is still on the roadmap.
 
-### 15. Web app · Shipped (review, AI judge, ledger feed, docs)
+### 15. Web app · Shipped (review, AI judge, ledger feed, census, docs)
 `web/` is a Next.js app in TypeScript, styled with Tailwind, exported as a
 static site; nothing runs on a server. It loads the same WASM build as the npm
 package.
@@ -400,7 +403,9 @@ Build it with `bash scripts/build-web.sh` (writes `web/out/`) and serve that
 folder with any static server, e.g. `python -m http.server -d web/out`. Set
 `BASE_PATH=/Tidemark` when hosting under a subpath such as GitHub Pages. For
 development, run the build once and then `npm run dev` in `web/`.
-The authority census view is still on the roadmap.
+- **Who can upgrade?**: enter program ids (and any Squads multisigs) and the
+  page classifies each one's upgrade control in the browser, including the
+  Squads threshold, voters and timelock, the same way `tidemark census` does.
 
 ---
 

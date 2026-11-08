@@ -63,6 +63,11 @@ export default function Page() {
         Keeps every deployed version as <C>snapshots/&lt;program&gt;/&lt;slot&gt;.so</C> and reviews each upgrade against
         the previous snapshot. Add <C>--attest &lt;LEDGER&gt;</C> to publish each review.
       </P>
+      <P>
+        It also subscribes to the ProgramData account over a websocket derived from <C>--rpc</C> (or <C>--ws URL</C>) and
+        checks the moment it changes; polling continues underneath and a dropped socket reconnects. Use{" "}
+        <C>--no-ws</C> to poll only.
+      </P>
 
       <H2 id="census">Who can upgrade it?</H2>
       <Code>{`tidemark census --rpc https://api.mainnet-beta.solana.com <PROGRAM_ID>...`}</Code>
