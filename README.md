@@ -14,7 +14,7 @@ is, and writes every review to a public, hash-linked ledger on Solana.
 
 ```
 $ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
-Tidemark upgrade review  (tm-rules-0.5)
+Tidemark upgrade review  (tm-rules-0.6)
   old  99e7c4fe98f886be  20066 insns
   new  519015fa4879499f  20608 insns
   changed instructions: 996 (2.45%)
@@ -42,10 +42,14 @@ Status key: **Shipped** is in this repository and tested. **Roadmap** is designe
 (see [HLD](docs/architecture/HLD.md)) but not built yet.
 
 ### 1. Bytecode-level upgrade diff · Shipped
-Works on deployed SBPFv1 programs (what `cargo build-sbf` and Anchor 0.31
-produce today), with no source code or IDL required. The SBPF version is read
-from the ELF header; v2 and v3 binaries, which change instruction meanings, are
-refused with a clear message instead of being mis-read.
+Works on every deployable SBPF version, v0 to v3, with no source code or IDL
+required. The version is read from the ELF header and each version is decoded
+into one canonical form, so every rule runs unchanged: v2's moved memory
+opcodes and `mov` + `hor64` constant pairs, v3's 32-bit jumps, static syscalls
+and strict program-header layout (section headers may be absent). The demo
+backdoor is caught as High in all 16 old→new version combinations. Once
+SIMD-0500 activates, deploys, upgrades and freezing all require v3, so this is
+what keeps Tidemark useful after the switch.
 - A purpose-built **sBPF decoder** handles every instruction class, including
   two-word `lddw`.
 - **Normalized comparison**: jump targets, internal call targets and load
@@ -60,7 +64,7 @@ refused with a clear message instead of being mis-read.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
 
 ### 2. Upgrade risk rules · Shipped
-Deterministic, versioned rules (`tm-rules-0.5`) turn a diff into ranked findings:
+Deterministic, versioned rules (`tm-rules-0.6`) turn a diff into ranked findings:
 
 | Rule | What it catches |
 |---|---|
@@ -79,6 +83,7 @@ Deterministic, versioned rules (`tm-rules-0.5`) turn a diff into ranked findings
 | `TM-SECTXT` | `security.txt` removed or changed (possible change of responsible party) |
 | `TM-CHURN` | Large rewrites that can hide small malicious changes |
 | `TM-PARTIAL` | Analysis hit a time or size limit, so findings may be missing |
+| `TM-VERSION-CHANGE` | The SBPF version changed, so the program was rebuilt for a new target; layout-sensitive findings are capped at Medium |
 
 Well-known program ids (System, Token, Token-2022, ATA, …) are recognised and
 named, so a new reference to Token isn't mistaken for a planted key.
@@ -192,7 +197,7 @@ each review on the ledger, using the same path as `tidemark attest`.
 $ tidemark watch 5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3
 5pHTpt…: baseline snapshot at slot 519447118
 5pHTpt…: upgraded, slot 519447118 -> 519503311
-Tidemark upgrade review  (tm-rules-0.5) …
+Tidemark upgrade review  (tm-rules-0.6) …
 ```
 
 The watcher needs to be running before an upgrade to have the old version;

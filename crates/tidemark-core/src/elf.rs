@@ -58,12 +58,13 @@ fn is_address(v: u64, image_end: u64) -> bool {
 const EM_BPF: u16 = 247;
 const EM_SBPF: u16 = 263;
 const EF_SBPF_V2: u32 = 0x20;
-pub const SUPPORTED_SBPF: [u8; 2] = [0, 1];
+pub const SUPPORTED_SBPF: [u8; 4] = [0, 1, 2, 3];
 
 pub fn sbpf_version(machine: u16, flags: u32) -> Result<u8> {
     match (machine, flags) {
         (EM_BPF, 0) => Ok(0),
         (EM_BPF, EF_SBPF_V2) => Ok(2),
+        (EM_BPF, v @ 1..=3) => Ok(v as u8),
         (EM_SBPF, v @ 0..=3) => Ok(v as u8),
         (EM_BPF | EM_SBPF, f) => anyhow::bail!("unknown SBPF flags {f:#x}"),
         (m, _) => anyhow::bail!("not an SBPF program (e_machine {m})"),
@@ -87,34 +88,53 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
     let elf = Elf::parse(bytes).context("not a valid ELF file")?;
     let version = sbpf_version(elf.header.e_machine, elf.header.e_flags)?;
     if !SUPPORTED_SBPF.contains(&version) {
-        anyhow::bail!("SBPF v{version} programs are not supported yet; Tidemark reads v0 and v1");
+        anyhow::bail!("SBPF v{version} programs are not supported yet; Tidemark reads v0 to v3");
     }
     let sec = |name: &str| {
         elf.section_headers
             .iter()
             .find(|s| elf.shdr_strtab.get_at(s.sh_name) == Some(name))
     };
-    let slice = |s: &goblin::elf::SectionHeader| {
-        let a = s.sh_offset as usize;
-        let b = a.saturating_add(s.sh_size as usize).min(bytes.len());
+    let range = |off: u64, len: u64| {
+        let a = off as usize;
+        let b = a.saturating_add(len as usize).min(bytes.len());
         &bytes[a.min(b)..b]
     };
+    let slice = |s: &goblin::elf::SectionHeader| range(s.sh_offset, s.sh_size);
+    let loads: Vec<&goblin::elf::ProgramHeader> = elf
+        .program_headers
+        .iter()
+        .filter(|h| h.p_type == goblin::elf::program_header::PT_LOAD)
+        .collect();
+    let exec = |want: bool| {
+        loads
+            .iter()
+            .find(|h| (h.p_flags & goblin::elf::program_header::PF_X != 0) == want)
+            .copied()
+    };
 
-    let text_hdr = sec(".text").context("program has no .text section")?;
-    let text = slice(text_hdr);
-    let insns = disasm::decode(text);
+    let (text, text_addr) = match sec(".text") {
+        Some(h) => (slice(h), h.sh_addr),
+        None => {
+            let h = exec(true).context("program has no .text section or executable segment")?;
+            (range(h.p_offset, h.p_filesz), h.p_vaddr)
+        }
+    };
+    let insns = disasm::decode_for(text, version);
 
     let mut reloc_names: HashMap<usize, String> = HashMap::new();
+    let low = |addr: u64, len: u64| (addr & 0xffff_ffff).saturating_add(len);
     let image_end = elf
         .section_headers
         .iter()
-        .map(|s| s.sh_addr.saturating_add(s.sh_size))
+        .map(|s| low(s.sh_addr, s.sh_size))
+        .chain(loads.iter().map(|h| low(h.p_vaddr, h.p_memsz)))
         .max()
         .unwrap_or(0);
     let mut relocated: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for r in elf.dynrels.iter() {
-        if matches!(r.r_type, R_BPF_64_RELATIVE | R_BPF_64_64) && r.r_offset >= text_hdr.sh_addr {
-            relocated.insert(((r.r_offset - text_hdr.sh_addr) / 8) as usize);
+        if matches!(r.r_type, R_BPF_64_RELATIVE | R_BPF_64_64) && r.r_offset >= text_addr {
+            relocated.insert(((r.r_offset - text_addr) / 8) as usize);
         }
         if r.r_type != R_BPF_64_32 {
             continue;
@@ -128,8 +148,8 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
         if sym.st_value != 0 || name.is_empty() {
             continue;
         }
-        if r.r_offset >= text_hdr.sh_addr {
-            let pc = ((r.r_offset - text_hdr.sh_addr) / 8) as usize;
+        if r.r_offset >= text_addr {
+            let pc = ((r.r_offset - text_addr) / 8) as usize;
             reloc_names.insert(pc, name.to_string());
         }
     }
@@ -178,7 +198,7 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
             pc: i.pc,
             ..Flow::default()
         };
-        if i.op & 7 == 5 && !matches!(i.op, 0x85 | 0x8d | 0x95) {
+        if disasm::is_branch_op(i) {
             f.target = rel(i.off as i64);
         } else if i.op == 0x85 && i.src == 1 && sc.is_none() {
             f.target = rel(i.imm);
@@ -197,10 +217,13 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
 
     let by_pc: HashMap<usize, usize> = insns.iter().enumerate().map(|(n, i)| (i.pc, n)).collect();
     let mut dispatch = Vec::new();
+    let mut loose = Vec::new();
     for w in wide.iter_mut() {
         let Some(&n) = by_pc.get(&w.pc) else { continue };
-        if let Some(t) = dispatch_target(&insns, n) {
-            dispatch.push((w.value, t, w.pc));
+        match dispatch_entry(&insns, n) {
+            Some((t, Source::Load(at))) => dispatch.push((w.value, t, at, insns[n].pc)),
+            Some((t, Source::Register(r))) => loose.push((w.value, t, w.pc, r)),
+            None => {}
         }
         if let Some(slot) = stored_to(&insns, n) {
             w.slot = Some(slot);
@@ -209,17 +232,39 @@ pub fn load(bytes: &[u8]) -> Result<Program> {
             w.cmp = true;
         }
     }
+    let anchors: Vec<(usize, u8)> = dispatch
+        .iter()
+        .filter_map(|e| by_pc.get(&e.2).map(|&m| (e.2, insns[m].dst)))
+        .collect();
+    for (value, t, pc, reg) in loose {
+        if let Some(&(at, _)) = anchors
+            .iter()
+            .filter(|(at, r)| *r == reg && *at < pc && pc - at <= ANCHOR_REACH)
+            .max_by_key(|(at, _)| *at)
+        {
+            dispatch.push((value, t, at, pc));
+        }
+    }
+    dispatch.sort_by_key(|e| (e.2, e.3));
+    let dispatch: Vec<(u64, usize, usize)> = dispatch
+        .into_iter()
+        .map(|(v, t, at, _)| (v, t, at))
+        .collect();
 
     let mut strings = BTreeSet::new();
     let mut consts32 = BTreeSet::new();
     let mut rodata = Vec::new();
-    for name in [".rodata", ".data.rel.ro"] {
-        if let Some(h) = sec(name) {
-            let data = slice(h);
-            extract_strings(data, &mut strings);
-            extract_consts(data, &mut consts32);
-            rodata.extend_from_slice(data);
-        }
+    let mut ro: Vec<&[u8]> = [".rodata", ".data.rel.ro"]
+        .iter()
+        .filter_map(|n| sec(n).map(slice))
+        .collect();
+    if ro.is_empty() && sec(".text").is_none() {
+        ro.extend(exec(false).map(|h| range(h.p_offset, h.p_filesz)));
+    }
+    for data in ro {
+        extract_strings(data, &mut strings);
+        extract_consts(&mask_addresses(data, image_end), &mut consts32);
+        rodata.extend_from_slice(data);
     }
     let security_txt = sec(".security.txt").map(|h| {
         String::from_utf8_lossy(slice(h))
@@ -254,6 +299,7 @@ const SLOT_SCAN: usize = 32;
 fn writes(i: &disasm::Insn, reg: u8) -> bool {
     match i.op & 7 {
         0 | 1 | 4 | 7 => i.dst == reg,
+        6 if i.ver == 2 => i.dst == reg,
         5 => matches!(i.op, 0x85 | 0x8d) && reg <= 5,
         _ => false,
     }
@@ -294,21 +340,47 @@ pub fn is_error_code(v: i64) -> bool {
     matches!(v, 2000..=3999 | 6000..=6999)
 }
 
+#[cfg(kani)]
 fn dispatch_target(insns: &[disasm::Insn], n: usize) -> Option<usize> {
+    dispatch_entry(insns, n).map(|(t, _)| t)
+}
+
+enum Source {
+    Load(usize),
+    Register(u8),
+}
+
+const ANCHOR_REACH: usize = 64;
+
+fn dispatch_entry(insns: &[disasm::Insn], n: usize) -> Option<(usize, Source)> {
     let reg = insns[n].dst;
-    let k = (n + 1..insns.len().min(n + 4))
-        .find(|&k| insns[k].op == 0x1d && (insns[k].dst == reg || insns[k].src == reg))?;
+    let k = (n + 1..insns.len().min(n + 4)).find(|&k| {
+        let i = &insns[k];
+        disasm::is_branch_op(i) && i.op & 0x08 != 0 && (i.dst == reg || i.src == reg)
+    })?;
     let j = &insns[k];
+    if !matches!(j.op, 0x1d | 0x5d) {
+        return None;
+    }
     let other = if j.dst == reg { j.src } else { j.dst };
-    let m = (k.saturating_sub(8)..k)
+    let target = if j.op == 0x5d {
+        j.pc + 1
+    } else {
+        let t = j.pc as i64 + 1 + j.off as i64;
+        usize::try_from(t).ok()?
+    };
+    let Some(m) = (k.saturating_sub(8)..k)
         .rev()
-        .find(|&m| m != n && writes(&insns[m], other))?;
+        .take_while(|&m| !matches!(insns[m].op, 0x05 | 0x95))
+        .find(|&m| m != n && writes(&insns[m], other))
+    else {
+        return Some((target, Source::Register(other)));
+    };
     let l = &insns[m];
     if l.op != 0x79 || l.off != 0 {
         return None;
     }
-    let t = j.pc as i64 + 1 + j.off as i64;
-    (t >= 0).then_some(t as usize)
+    Some((target, Source::Load(l.pc)))
 }
 
 fn extract_strings(data: &[u8], out: &mut BTreeSet<String>) {
@@ -330,6 +402,17 @@ fn extract_strings(data: &[u8], out: &mut BTreeSet<String>) {
 }
 
 pub const MAX_CONST_WINDOWS: usize = 1 << 16;
+
+fn mask_addresses(data: &[u8], image_end: u64) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for w in out.as_chunks_mut::<8>().0 {
+        let v = u64::from_le_bytes(*w);
+        if v != 0 && is_address(v, image_end) {
+            w.fill(0);
+        }
+    }
+    out
+}
 
 fn extract_consts(data: &[u8], out: &mut BTreeSet<[u8; 32]>) {
     if data.len() < 32 {
@@ -384,6 +467,7 @@ mod proofs {
                     off: kani::any(),
                     imm: kani::any(),
                     wide: kani::any(),
+                    ver: 0,
                 };
                 kani::assume(i.dst < 16 && i.src < 16);
                 i

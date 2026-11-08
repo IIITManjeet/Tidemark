@@ -77,11 +77,16 @@ fn logged_names(p: &Program, known: &BTreeSet<u64>) -> BTreeMap<u64, String> {
         let mut words = camel_words(&run);
         words.truncate(MAX_NAME_WORDS);
         'prefix: for k in (1..=words.len()).rev() {
-            for name in name_candidates(&words[..k]) {
-                let d = discriminator(&name);
-                if known.contains(&d) {
-                    out.insert(d, name);
-                    break 'prefix;
+            let last = words[k - 1];
+            for cut in (1..=last.len()).rev() {
+                let mut ws = words[..k - 1].to_vec();
+                ws.push(&last[..cut]);
+                for name in name_candidates(&ws) {
+                    let d = discriminator(&name);
+                    if known.contains(&d) {
+                        out.insert(d, name);
+                        break 'prefix;
+                    }
                 }
             }
         }

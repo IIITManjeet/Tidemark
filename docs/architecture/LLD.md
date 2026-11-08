@@ -36,8 +36,33 @@ platform-tools compiler lags stable Rust; each workspace has its own lockfile.
 ### 2.1 ELF loading (`elf.rs`)
 
 The SBPF version comes from the header: `e_machine` 247 with `e_flags` 0 is v0,
-247 with `0x20` is v2, and 263 carries the version in `e_flags` (0–3). Only v0
-and v1 are decoded; anything else is refused before analysis.
+247 with `0x20` is v2, 247 with 1–3 and 263 with 0–3 carry the version in
+`e_flags`. v4 and unknown flags are refused.
+
+Each version decodes into the v0 instruction form (`disasm::decode_for`):
+- v2: memory opcodes moved into the ALU classes are mapped back to `ldx`/`st`/
+  `stx`; `lddw` does not exist, so a `mov32`/`mov64` immediate followed by
+  `hor64` on the same register becomes one wide constant load; class 6 is the
+  PQR multiply/divide group; `callx` takes its register from `src`.
+- v3: class 6 is 32-bit conditional jumps (`jeq32` …), which count as branches
+  for retargets, guards and dispatch; `callx` takes its register from `dst`;
+  syscalls are `call` with the murmur hash in `imm`, internal calls are
+  relative.
+
+`.text` and `.rodata` come from section headers when present, otherwise from
+the executable and read-only `PT_LOAD` segments, as SIMD-0189 allows. The
+address check uses the low 32 bits of every section and segment end, so v3's
+bytecode at `1 << 32` and rodata at 0 fall inside the same regions as before.
+Before `.rodata` is scanned for 32-byte keys, aligned 8-byte words that are
+addresses are zeroed, so pointer tables that move between builds are not
+reported as new keys.
+
+Dispatch entries are `lddw disc` followed by `jeq` (handler at the target) or
+`jne` (handler at the fall-through) against a register loaded with
+`ldxdw [rB+0]`. Newer compilers emit a binary search: range compares (`jsle`,
+`jgt` …) are split points, not handlers, and an entry whose block has no
+visible load is tied to the closest earlier load of the same register within
+64 instructions. The backward search for that load stops at `ja` and `exit`.
 
 
 | Field | Source |
@@ -76,7 +101,7 @@ its upper half is a VM region (1 to 4). Everything else is a constant and is
 compared as-is. Alongside each line the loader keeps a `Flow` record: the
 absolute branch or internal-call target and the constant, if any.
 
-### 2.3 Rules (`diff.rs`, `tm-rules-0.5`)
+### 2.3 Rules (`diff.rs`, `tm-rules-0.6`)
 
 | Rule | Trigger | Severity |
 |---|---|---|
@@ -97,6 +122,7 @@ absolute branch or internal-call target and the constant, if any.
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
 | TM-PARTIAL | diff deadline hit, `.rodata` window cap reached, or handler walk out of budget | Medium |
+| TM-VERSION-CHANGE | old and new SBPF versions differ; TM-BRANCH-RETARGET, TM-CALL-RETARGET and TM-GUARD-GONE are capped at Medium, and TM-KEY-ADD too unless a key was rebuilt from instructions | Medium |
 
 **Key recovery.** Compiled Rust rarely keeps a `Pubkey` constant as 32
 contiguous bytes. It loads it as four 64-bit `lddw` immediates and either
@@ -220,7 +246,9 @@ is `ja`, branches to its own fall-through, or (in an equal-length edit) is no
 longer a jump raises TM-GUARD-GONE; so does a guard deleted in a block of at
 most 4 lines, capped at the drop in the total guard count.
 
-Known limits: an honest compiler change that merges identical error returns
+Known limits: rebuilding the same source from v2 to v3 lowers one seeds check
+count and raises a false TM-CHECK-GONE; v2 is enabled on mainnet but not
+used by current toolchains. An honest compiler change that merges identical error returns
 lowers check counts and can raise a false TM-CHECK-GONE. A guard moved
 somewhere else in a large rewrite is not tracked; TM-CHURN covers that case.
 Keys computed at runtime, or read from an account, are not constants and are
