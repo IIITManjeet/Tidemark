@@ -6,6 +6,8 @@
 
 Built for the MLH Solana Hackathon.
 
+![Tidemark landing page](docs/images/landing.png)
+
 Any upgradeable Solana program can be replaced at any moment by whoever holds
 its upgrade authority. Users, integrators and even the multisig signers who
 approve the upgrade usually can't see what the new bytecode does. Today's open
@@ -37,6 +39,32 @@ That is a real run against the demo vault and its backdoored upgrade, built
 from `contracts/programs/demo-vault`. Tidemark recovers the attacker's address
 byte for byte, spots that `withdraw` lost its `has_one` and signer checks and names the new `sweep`
 handler, all from bytecode alone.
+
+## Highlights
+
+- **Reads what is deployed, not the source.** Decodes sBPF v0 to v3, aligns old
+  and new builds so moved code doesn't hide the change, and flags new keys,
+  removed signer and owner checks, new handlers, retargeted calls and new CPIs.
+- **Same answer on every machine.** Deterministic, versioned rules produce one
+  verdict hash. Tested on 67 mainnet programs: every self-diff clean, the CLI and
+  the in-browser engine agree on 108 of 108 diffs.
+- **Reviews live on Solana.** A quorum-signed Anchor ledger records each review.
+  v3 hashes the deployed ELF on chain, refuses a mismatch and records the deploy
+  slot. The ledger's own upgrade key sits behind a Squads multisig with a
+  timelock.
+- **Wherever you work.** Web app (nothing leaves the browser), CLI and CI gate,
+  npm package, VS Code extension, upgrade watcher and authority census.
+- **AI that can only make you more careful.** An optional Gemini jury explains
+  findings and must cite them; a majority can raise the risk, never lower it,
+  and it never touches the verdict hash.
+
+## Screenshots
+
+| Review an upgrade | Verify the ledger |
+|---|---|
+| ![Review of the backdoored demo upgrade, flagged HIGH](docs/images/review.png) | ![Ledger v3 verified in the browser, entry 2 of 2 final](docs/images/ledger.png) |
+| **How it works** | **Docs** |
+| ![From one signature to a co-signed review](docs/images/how-it-works.png) | ![Documentation site](docs/images/docs.png) |
 
 ## Get it
 
