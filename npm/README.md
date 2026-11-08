@@ -19,8 +19,8 @@ console.log(report.risk, report.findings);
 
 const ledger = await fetchLedger(
   "https://api.devnet.solana.com",
-  "BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc",
-  "72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU",
+  "8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6",
+  "GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v",
 );
 console.log(ledger.ok, ledger.entries);
 ```

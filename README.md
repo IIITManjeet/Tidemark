@@ -2,6 +2,12 @@
 
 **See what a Solana program upgrade actually changed, before and after it lands.**
 
+[Live app](https://tidemark-sol.vercel.app) · [Demo video (2 min)](https://www.youtube.com/watch?v=0c6auYX0RL4) · [Docs](https://tidemark-sol.vercel.app/docs) · [Release v0.1.0](https://github.com/IIITManjeet/Tidemark/releases/tag/v0.1.0) · [npm](https://www.npmjs.com/package/tidemark-wasm) · [Ledger v3 on devnet](https://explorer.solana.com/address/8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6?cluster=devnet)
+
+Built for the MLH Solana Hackathon.
+
+![Tidemark landing page](docs/images/landing.png)
+
 Any upgradeable Solana program can be replaced at any moment by whoever holds
 its upgrade authority. Users, integrators and even the multisig signers who
 approve the upgrade usually can't see what the new bytecode does. Today's open
@@ -33,6 +39,32 @@ That is a real run against the demo vault and its backdoored upgrade, built
 from `contracts/programs/demo-vault`. Tidemark recovers the attacker's address
 byte for byte, spots that `withdraw` lost its `has_one` and signer checks and names the new `sweep`
 handler, all from bytecode alone.
+
+## Highlights
+
+- **Reads what is deployed, not the source.** Decodes sBPF v0 to v3, aligns old
+  and new builds so moved code doesn't hide the change, and flags new keys,
+  removed signer and owner checks, new handlers, retargeted calls and new CPIs.
+- **Same answer on every machine.** Deterministic, versioned rules produce one
+  verdict hash. Tested on 67 mainnet programs: every self-diff clean, the CLI and
+  the in-browser engine agree on 108 of 108 diffs.
+- **Reviews live on Solana.** A quorum-signed Anchor ledger records each review.
+  v3 hashes the deployed ELF on chain, refuses a mismatch and records the deploy
+  slot. The ledger's own upgrade key sits behind a Squads multisig with a
+  timelock.
+- **Wherever you work.** Web app (nothing leaves the browser), CLI and CI gate,
+  npm package, VS Code extension, upgrade watcher and authority census.
+- **AI that can only make you more careful.** An optional Gemini jury explains
+  findings and must cite them; a majority can raise the risk, never lower it,
+  and it never touches the verdict hash.
+
+## Screenshots
+
+| Review an upgrade | Verify the ledger |
+|---|---|
+| ![Review of the backdoored demo upgrade, flagged HIGH](docs/images/review.png) | ![Ledger v3 verified in the browser, entry 2 of 2 final](docs/images/ledger.png) |
+| **How it works** | **Docs** |
+| ![From one signature to a co-signed review](docs/images/how-it-works.png) | ![Documentation site](docs/images/docs.png) |
 
 ## Get it
 
@@ -267,14 +299,23 @@ program and whether it embeds a `security.txt`:
 - **multisig / governance**: the authority account is owned by Squads v3/v4
   or SPL Governance
 - **program-controlled (PDA)**: the authority is off the ed25519 curve, so no
-  private key exists and only a program can sign. Squads v4 vaults show up
-  this way, since a vault PDA is a plain system account.
+  private key exists and only a program can sign. A Squads v4 vault is a plain
+  system account, so it shows up this way unless you name its multisig with
+  `--squads <MULTISIG>`: census derives that multisig's vaults and, when one is
+  the authority and the multisig is owned by Squads v4, reports
+  **multisig (Squads v4)** with the multisig and vault index.
 
 ```
 $ tidemark census --rpc https://api.mainnet-beta.solana.com JUP6Lkb… whirLbM… MarBmsS…
 JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4   program-controlled (PDA)   no
 whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc   program-controlled (PDA)   no
 MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD   program-controlled (PDA)   yes
+```
+
+```
+$ tidemark census 8f43wqFP… BFZg7MYz… --squads 8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9
+8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6  multisig (Squads v4)  no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
+BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc  multisig (Squads v4)  no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
 ```
 
 Reading multisig thresholds and timelocks, verified-build status and a public
@@ -337,6 +378,40 @@ The authority census view is still on the roadmap.
 ---
 
 ## Live on devnet
+
+### Ledger v3
+
+Ledger v3 binds each review to the deployed bytes: the program hashes the
+ProgramData ELF on chain at attest time and refuses a mismatch, and records
+the deploy slot. The demo vault upgrade is attested and co-signed 2 of 2. The
+ledger's own upgrade authority is a Squads v4 vault (2 of 3, one-hour timelock).
+
+| What | Address |
+|---|---|
+| Ledger program (v3) | [`8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6`](https://explorer.solana.com/address/8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6?cluster=devnet) |
+| Registry (2-of-2) | [`GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v`](https://explorer.solana.com/address/GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v?cluster=devnet) |
+| Entry #0 | [`8MGCYxTkAtDaq9JqZf3s8EqBGD2YJufEnLS5qEaPYLF`](https://explorer.solana.com/address/8MGCYxTkAtDaq9JqZf3s8EqBGD2YJufEnLS5qEaPYLF?cluster=devnet) |
+| Ledger upgrade multisig (Squads v4) | [`8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9`](https://explorer.solana.com/address/8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9?cluster=devnet) |
+
+| Step | Transaction |
+|---|---|
+| Ledger v3 deployed | [`4zSi2xLc…`](https://explorer.solana.com/tx/4zSi2xLcM5SeXNzVH4iFM8LXJ4BYdXBYR5G7yCCV2SVPQennbCjm7YwKoa5CdnZ7z4ACV14wZhjBHRRne5q64AR9?cluster=devnet) |
+| Registry created | [`mjjtarsA…`](https://explorer.solana.com/tx/mjjtarsAUrQ2swyu7cRN8QG9B6dZTTUj2HUESrkS4HF9LSSJocfc78qiLNyFUikHYpwLchGX7qomD3o8cyGE3aA?cluster=devnet) |
+| Threshold set to 2 | [`eqhqKE4V…`](https://explorer.solana.com/tx/eqhqKE4V1xzzX3m5f7FNUCmNSkfjECXk4EcxmMMMM2T2UjGRKFppAtTNF3k4TCYStQ2rvbL6fEvmGXwFqDnu3wP?cluster=devnet) |
+| Reviewer 1 attests, deployed bytes checked on chain | [`947PWasP…`](https://explorer.solana.com/tx/947PWasPrY9KbKzrYnF6RAVD4xSJGToYKv3BZqa5ApiJ9YHUdYhNXwGGBF5jazYyYBR5oJUMTunhm5kCfZrDr6E?cluster=devnet) |
+| Reviewer 2 re-reviews and co-signs (2/2, final) | [`4JaBaScS…`](https://explorer.solana.com/tx/4JaBaScShJ6LUNYAtpiS72DzeTkD8qQrAwLR7W6dYFWxLjvGFpRf4a6BqYkFzthDmXCUTQWWV65YDC93rwCkXzDH?cluster=devnet) |
+
+```sh
+tidemark verify-ledger   --program 8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6   --registry GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v
+```
+
+```
+threshold  2 of 2 active reviewers
+  #0   slot 519973414  risk 3  program 5pHT…7aX3  by 9fxL…mCB1  2/2 final  deployed@519447118
+https://api.devnet.solana.com: chain OK, 1 entries, head 6067bae7f62960a2
+```
+
+### Ledger v2
 
 The ledger v2 program runs on devnet, and a real upgrade has gone through the
 full quorum flow: deploy a vault, snapshot it, upgrade it on-chain to the

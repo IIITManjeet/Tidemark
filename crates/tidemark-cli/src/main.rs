@@ -110,6 +110,12 @@ enum Cmd {
         rpc: String,
         #[arg(long, help = "Print JSON instead of a table")]
         json: bool,
+        #[arg(
+            long = "squads",
+            value_name = "MULTISIG",
+            help = "Squads v4 multisig whose vaults may hold upgrade authority (repeatable)"
+        )]
+        squads: Vec<String>,
     },
     #[command(about = "Create a reviewer registry with a k-of-n approval threshold")]
     InitRegistry {
@@ -573,6 +579,7 @@ fn main() -> Result<()> {
             file,
             rpc: url,
             json,
+            squads,
         } => {
             if let Some(f) = file {
                 let text = std::fs::read_to_string(&f)?;
@@ -588,7 +595,7 @@ fn main() -> Result<()> {
             }
             let rows: Vec<_> = programs
                 .iter()
-                .map(|p| tidemark_core::census::survey(&url, p))
+                .map(|p| tidemark_core::census::survey(&url, p, &squads))
                 .collect();
             if json {
                 out!("{}", serde_json::to_string_pretty(&rows)?);
