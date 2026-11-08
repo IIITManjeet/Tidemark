@@ -95,7 +95,7 @@ avoid them (for example splitting a key across functions, or reusing an
 existing CPI call site). Treat a clean report as "nothing obvious
 changed", not as proof of safety. Known gaps are tracked as GitHub issues.
 
-### 3. Quorum-signed attestation ledger · Shipped (v2 live on devnet, v3 tested locally)
+### 3. Quorum-signed attestation ledger · Shipped (v2 and v3 live on devnet)
 An Anchor program (`tidemark-ledger`) records reviews on Solana. v3
 (`8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6`, built for SBPF v3) adds:
 - **Deploy binding**: `attest` reads the reviewed program's ProgramData on
@@ -111,8 +111,9 @@ An Anchor program (`tidemark-ledger`) records reviews on Solana. v3
   change, and late-added approvers are shown.
 
 The full v3 flow (register, upgrade, attest, co-sign, rotate, verify, refuse
-after a redeploy) has been run end to end on a local validator; devnet deploy
-is pending. Clients read v2 and v3. In both versions: Who may
+after a redeploy) has been run end to end on a local validator. On devnet,
+registry `GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v` holds the demo upgrade,
+bound to its deploy slot and co-signed 2 of 2. Clients read v2 and v3. In both versions: Who may
 speak for a registry is enforced by the contract itself, not by trusting
 whoever holds a key file.
 - **Reviewer allowlist**: only keys the registry authority adds on-chain

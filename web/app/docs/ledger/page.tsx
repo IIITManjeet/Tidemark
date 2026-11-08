@@ -1,5 +1,5 @@
 import { C, Callout, Code, DocPage, DocTable, H2, P, Ul } from "@/components/docs";
-import { LEDGER_V2, LEDGER_V3, REGISTRY_V2 } from "@/lib/site";
+import { LEDGER_V2, LEDGER_V3, REGISTRY_V2, REGISTRY_V3, UPGRADE_MULTISIG } from "@/lib/site";
 
 export const metadata = { title: "Attestation ledger · Tidemark docs" };
 
@@ -43,7 +43,7 @@ export default function Page() {
       />
 
       <H2 id="verify">Verify a registry</H2>
-      <Code>{`tidemark verify-ledger --program ${LEDGER_V2} \\\n  --registry ${REGISTRY_V2} \\\n  --rpc https://api.devnet.solana.com --rpc <SECOND_RPC>`}</Code>
+      <Code>{`tidemark verify-ledger --program ${LEDGER_V3} \\\n  --registry ${REGISTRY_V3} \\\n  --rpc https://api.devnet.solana.com --rpc <SECOND_RPC>`}</Code>
       <P>
         It also prints the ledger program's own upgrade authority and warns if the ledger was redeployed after entries were
         written, and it counts approvals by reviewers added after an entry.
@@ -53,12 +53,12 @@ export default function Page() {
       <DocTable
         head={["Version", "Program id", "Status"]}
         rows={[
-          ["v2", <C key="2">{LEDGER_V2}</C>, "Live on devnet with a co-signed review of the demo upgrade"],
-          ["v3", <C key="3">{LEDGER_V3}</C>, "Tested end to end on a local validator; devnet deploy pending"],
+          ["v3", <C key="3">{LEDGER_V3}</C>, <>Live on devnet. Registry <C>{REGISTRY_V3}</C>: the demo upgrade, bound to its deploy slot and co-signed 2 of 2</>],
+          ["v2", <C key="2">{LEDGER_V2}</C>, <>Live on devnet, still verified by every client. Registry <C>{REGISTRY_V2}</C></>],
         ]}
       />
       <Callout tone="warn" title="Who controls the ledger itself">
-        The devnet v2 ledger can only be upgraded through a Squads v4 multisig: 2 of 3 members approve, then a one-hour
+        Both devnet ledgers can only be upgraded through a Squads v4 multisig (<C>{UPGRADE_MULTISIG}</C>): 2 of 3 members approve, then a one-hour
         timelock runs before the upgrade can execute. On devnet one maintainer holds all three member keys, so this
         demonstrates the mechanism, not independent control. Next come independent members, a longer timelock, and
         freezing the program; v3 is built for SBPF v3 so it can still be frozen after SIMD-0500.
