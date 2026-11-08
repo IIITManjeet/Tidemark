@@ -1,5 +1,10 @@
 # Tidemark
 
+[![ci](https://github.com/IIITManjeet/Tidemark/actions/workflows/ci.yml/badge.svg)](https://github.com/IIITManjeet/Tidemark/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/IIITManjeet/Tidemark)](https://github.com/IIITManjeet/Tidemark/releases/tag/v0.1.0)
+[![npm](https://img.shields.io/npm/v/tidemark-wasm)](https://www.npmjs.com/package/tidemark-wasm)
+[![license](https://img.shields.io/github/license/IIITManjeet/Tidemark)](LICENSE)
+
 **See what a Solana program upgrade actually changed, before and after it lands.**
 
 [Live app](https://tidemark-sol.vercel.app) · [Demo video (2 min)](https://www.youtube.com/watch?v=0c6auYX0RL4) · [Docs](https://tidemark-sol.vercel.app/docs) · [Release v0.1.0](https://github.com/IIITManjeet/Tidemark/releases/tag/v0.1.0) · [npm](https://www.npmjs.com/package/tidemark-wasm) · [Ledger v3 on devnet](https://explorer.solana.com/address/8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6?cluster=devnet)
@@ -94,12 +99,14 @@ what keeps Tidemark useful after the switch.
 - A purpose-built **sBPF decoder** handles every instruction class, including
   two-word `lddw`.
 - **Normalized comparison**: jump targets, internal call targets and load
-  addresses are masked, so code that only *moved* compares equal. The same
-  masking currently also hides a branch or call that was *retargeted* and a
-  changed 64-bit constant; fixing that is the next detection milestone.
-- **Bounded work**: inputs over 16 MiB are rejected, the line diff runs a
-  patience algorithm with a 10 s deadline, and every rule runs in near-linear
-  time, so a hostile binary can't stall a CI job.
+  addresses are masked, so code that only *moved* compares equal. A second pass
+  resolves the masked targets, so a branch or call that now points at different
+  code is still reported, and a target that moved but runs the same code is not.
+- **Bounded, deterministic work**: inputs over 16 MiB are rejected. The exact
+  patience diff runs only when a work estimate computed from the inputs fits a
+  fixed budget; otherwise a coarser diff runs and the report says so
+  (`TM-PARTIAL`). The same inputs give the same report on any machine, and a
+  hostile binary can't stall a CI job.
 - **Syscall resolution** through `R_BPF_64_32` relocations (SBPFv1) and murmur3
   syscall ids (static syscalls). `call 0x…` shows as `call sol_invoke_signed_rust`.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
@@ -154,8 +161,9 @@ An Anchor program (`tidemark-ledger`) records reviews on Solana. v3
 The full v3 flow (register, upgrade, attest, co-sign, rotate, verify, refuse
 after a redeploy) has been run end to end on a local validator. On devnet,
 registry `GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v` holds the demo upgrade,
-bound to its deploy slot and co-signed 2 of 2. Clients read v2 and v3. In both versions: Who may
-speak for a registry is enforced by the contract itself, not by trusting
+bound to its deploy slot and co-signed 2 of 2. Clients read v2 and v3.
+
+In both versions, who may speak for a registry is enforced by the contract itself, not by trusting
 whoever holds a key file.
 - **Reviewer allowlist**: only keys the registry authority adds on-chain
   (a `Reviewer` PDA per key) can attest or approve. Anyone else is rejected by
@@ -185,7 +193,7 @@ whoever holds a key file.
 - **Confirmed writes**: every transaction is polled until confirmed, and a
   failed one is reported as a failure.
 
-Who controls the ledger itself: the devnet v2 ledger's upgrade authority is a
+Who controls the ledger itself: the devnet v2 and v3 ledgers' upgrade authority is a
 Squads v4 vault (`GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2`, multisig
 `8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9`): 2 of 3 members must approve an
 upgrade, and it can only execute an hour after approval. On devnet all three
@@ -229,11 +237,12 @@ demo upgrade, and the Kani proofs.
 45-byte ProgramData header, and reports the upgrade authority and last deploy
 slot. Immutable programs are identified as such.
 
-### 7. AI judge · Shipped (CLI)
-`tidemark diff old.so new.so --judge` adds an advisory AI review on top of the
+### 7. AI judge · Shipped (CLI and web)
+`tidemark diff old.so new.so --judge`, or the *AI judge* panel in the web app, adds an advisory AI review on top of the
 deterministic report. It is off by default and needs `GEMINI_KEY` in the
 environment (`GEMINI_MODEL` picks the model, default `gemini-2.5-flash`); with
-no key it says so and carries on.
+no key it says so and carries on. In the web app you paste your own key; it
+goes from the browser straight to Google and is not stored.
 - **Explainer:** a short plain-English summary of what the upgrade changes,
   referring to findings by id.
 - **Jury:** three fixed yes/no questions, each asked three times: can a single
@@ -259,9 +268,10 @@ Guardrails:
 Still on the roadmap: a triage agent for ambiguous diffs, and a verifier that
 writes a LiteSVM test to reproduce a finding.
 
-### 8. Cost-efficient inference cascade · Roadmap
+### 8. Cost-efficient inference cascade · Partly shipped
 Expensive work runs only when it has to:
-1. **Content cache** keyed by `sha256(old) ‖ sha256(new)`. Repeat reviews are free.
+1. **Content cache** (Shipped, `--cache DIR`) keyed by both code hashes and the
+   rules version. Repeat reviews are free.
 2. **Rule pre-check** settles most diffs locally, with no model call and minimal RPC lookups.
 3. **Model calls** use a fixed prompt prefix (system prompt plus rule pack), so
    the inference server reuses its **KV cache** across requests. Self-hosted
@@ -349,7 +359,7 @@ keys never share a process with untrusted input.
   Marketplace listing is awaiting review), or build with `bash scripts/build-vscode.sh`.
 - Showing findings inline in the editor is still on the roadmap.
 
-### 15. Web app · Shipped (diff viewer and ledger feed)
+### 15. Web app · Shipped (review, AI judge, ledger feed, docs)
 `web/` is a Next.js app in TypeScript, styled with Tailwind, exported as a
 static site; nothing runs on a server. It loads the same WASM build as the npm
 package.
@@ -460,14 +470,19 @@ read them.
 ## Repository layout
 
 ```
-crates/tidemark-core     diff engine, rules, ledger client and verifier (Rust)
+crates/tidemark-core     diff engine, rules, AI judge, ledger client and verifier (Rust)
 crates/tidemark-cli      `tidemark` command-line tool
+crates/tidemark-wasm     the engine compiled to WebAssembly
 contracts/               Anchor workspace
   programs/tidemark-ledger   attestation ledger program
   programs/demo-vault        demo vault and its backdoored v2 upgrade (devnet only)
+web/                     Next.js app and docs site (static export)
+npm/                     tidemark-wasm package
+vscode/                  VS Code extension
+deploy/                  upgrade watcher container (Dockerfile, railway.json at the root)
 fixtures/                built program binaries used by tests and CI
 scripts/                 build helpers
-docs/architecture/       HLD.md, LLD.md
+docs/                    architecture (HLD, LLD), testing, releasing, screenshots
 ```
 
 ## Quick start
