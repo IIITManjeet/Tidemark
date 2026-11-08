@@ -110,6 +110,25 @@ enum Cmd {
         #[arg(long, default_value = DEFAULT_KEYPAIR)]
         keypair: String,
     },
+    #[command(about = "Review a Squads v4 upgrade proposal before approving it")]
+    Proposal {
+        #[arg(long, help = "Squads v4 multisig address")]
+        multisig: String,
+        #[arg(long, help = "Transaction index of the proposal")]
+        index: u64,
+        #[arg(long, default_value = DEVNET)]
+        rpc: String,
+        #[arg(long, help = "Write the JSON report here")]
+        json: Option<PathBuf>,
+        #[arg(long, default_value_t = 4, help = "Code hunks to print")]
+        hunks: usize,
+        #[arg(
+            long,
+            default_value = "high",
+            help = "Exit with code 2 when risk reaches this level (info, low, medium, high, critical)"
+        )]
+        fail_on: String,
+    },
     #[command(about = "Classify who can upgrade each program")]
     Census {
         programs: Vec<String>,
@@ -546,6 +565,59 @@ fn main() -> Result<()> {
                 d.upgrade_authority.as_deref().unwrap_or("none (immutable)")
             );
             out!("wrote {} bytes to {}", d.elf.len(), out.display());
+        }
+        Cmd::Proposal {
+            multisig,
+            index,
+            rpc: url,
+            json,
+            hunks,
+            fail_on,
+        } => {
+            let gate = Severity::parse(&fail_on)?;
+            let tx = tidemark_core::proposal::transaction_address(&multisig, index)?;
+            let (data, owner) = rpc::fetch_account(&url, &tx)?;
+            if owner != tidemark_core::census::SQUADS_V4 {
+                bail!("{tx} is not owned by Squads v4 (owner {owner})");
+            }
+            let upgrades = tidemark_core::proposal::parse_vault_transaction(&data)?;
+            if upgrades.is_empty() {
+                bail!("proposal #{index} on {multisig} contains no program upgrade");
+            }
+            let mut worst = Severity::Info;
+            for (i, u) in upgrades.iter().enumerate() {
+                if i > 0 {
+                    out!("");
+                }
+                out!(
+                    "proposal #{index} on {multisig}: upgrade {} from buffer {}",
+                    u.program,
+                    u.buffer
+                );
+                let live = rpc::fetch(&url, &u.program)?;
+                let (new, buffer_authority) = rpc::fetch_buffer(&url, &u.buffer)?;
+                out!(
+                    "  buffer authority  {}",
+                    buffer_authority.as_deref().unwrap_or("none")
+                );
+                let r = diff::compare(&elf::load(&live.elf)?, &elf::load(&new)?);
+                print_report(&r, hunks);
+                out!("\nverdict hash  {}", verdict_hash(&r));
+                out!("report hash   {}", tidemark_core::report_hash(&r));
+                worst = worst.max(r.risk);
+                if let Some(p) = &json {
+                    let p = if upgrades.len() == 1 {
+                        p.clone()
+                    } else {
+                        p.with_extension(format!("{i}.json"))
+                    };
+                    std::fs::write(&p, serde_json::to_string_pretty(&r)?)?;
+                    out!("JSON report written to {}", p.display());
+                }
+            }
+            if worst >= gate {
+                std::process::exit(2);
+            }
         }
         Cmd::Watch {
             program,

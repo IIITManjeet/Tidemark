@@ -12,6 +12,7 @@ use std::time::Duration;
 
 pub const UPGRADEABLE_LOADER: &str = "BPFLoaderUpgradeab1e11111111111111111111111";
 const PROGRAMDATA_HEADER: usize = 45;
+const BUFFER_HEADER: usize = 37;
 
 pub struct Deployed {
     pub elf: Vec<u8>,
@@ -133,6 +134,38 @@ pub fn fetch(rpc: &str, program_id: &str) -> Result<Deployed> {
     })
 }
 
+pub fn parse_buffer(data: &[u8]) -> Result<(&[u8], Option<[u8; 32]>)> {
+    if data.len() < BUFFER_HEADER {
+        bail!("Buffer account is too short");
+    }
+    let tag = u32::from_le_bytes(data[..4].try_into()?);
+    if tag != 1 {
+        bail!("not a Buffer account (loader state {tag})");
+    }
+    let authority = match data[4] {
+        0 => None,
+        1 => Some(data[5..37].try_into()?),
+        t => bail!("invalid buffer authority tag {t}"),
+    };
+    Ok((&data[BUFFER_HEADER..], authority))
+}
+
+#[cfg(feature = "net")]
+pub fn fetch_buffer(rpc: &str, buffer: &str) -> Result<(Vec<u8>, Option<String>)> {
+    let (data, owner) = account(rpc, buffer)?;
+    if owner != UPGRADEABLE_LOADER {
+        bail!("{buffer} is not owned by the upgradeable loader (owner {owner})");
+    }
+    let (raw, authority) = parse_buffer(&data)?;
+    let elf = raw[..elf_len(raw)?].to_vec();
+    Ok((elf, authority.map(|a| bs58::encode(a).into_string())))
+}
+
+#[cfg(feature = "net")]
+pub fn fetch_account(rpc: &str, key: &str) -> Result<(Vec<u8>, String)> {
+    account(rpc, key)
+}
+
 pub fn elf_len(raw: &[u8]) -> Result<usize> {
     elf_end(raw).map_err(|e| anyhow::anyhow!(e))
 }
@@ -191,6 +224,33 @@ mod proofs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffer_header_is_parsed_with_and_without_authority() {
+        let mut some = vec![1, 0, 0, 0, 1];
+        some.extend([7u8; 32]);
+        some.extend([0x7f, b'E', b'L', b'F']);
+        let (elf, auth) = parse_buffer(&some).unwrap();
+        assert_eq!(auth, Some([7u8; 32]));
+        assert_eq!(elf, b"\x7fELF");
+        let mut none = vec![1, 0, 0, 0, 0];
+        none.extend([0u8; 32]);
+        none.push(9);
+        let (elf, auth) = parse_buffer(&none).unwrap();
+        assert_eq!(auth, None);
+        assert_eq!(elf, [9]);
+    }
+
+    #[test]
+    fn buffer_rejects_other_accounts() {
+        assert!(parse_buffer(&[1, 0, 0, 0, 1]).is_err());
+        let mut pd = vec![3, 0, 0, 0, 0];
+        pd.extend([0u8; 32]);
+        assert!(parse_buffer(&pd).is_err());
+        let mut bad = vec![1, 0, 0, 0, 2];
+        bad.extend([0u8; 32]);
+        assert!(parse_buffer(&bad).is_err());
+    }
 
     #[test]
     fn odd_section_header_size_is_refused() {
