@@ -5,7 +5,6 @@ use serde::Serialize;
 use similar::{Algorithm, ChangeTag, TextDiff};
 use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -73,7 +72,7 @@ pub struct Report {
     pub hunks: Vec<Hunk>,
 }
 
-pub const RULES_VERSION: &str = "tm-rules-0.6";
+pub const RULES_VERSION: &str = "tm-rules-0.7";
 
 const KNOWN: &[(&str, &str)] = &[
     ("11111111111111111111111111111111", "System Program"),
@@ -120,7 +119,51 @@ const ANCHOR_CHECKS: &[(i64, &str)] = &[
     (3010, "AccountNotSigner"),
 ];
 
-const DIFF_DEADLINE: Duration = Duration::from_secs(10);
+const DIFF_WORK_BUDGET: u64 = 60_000_000_000;
+
+const SHINGLE: usize = 8;
+
+fn shingles(lines: &[String]) -> impl Iterator<Item = u64> + '_ {
+    let line_hash: Vec<u64> = lines
+        .iter()
+        .map(|l| {
+            l.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+            })
+        })
+        .collect();
+    (0..lines.len().saturating_sub(SHINGLE - 1)).map(move |i| {
+        line_hash[i..i + SHINGLE]
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325u64, |h, x| {
+                (h ^ x).wrapping_mul(0x0100_0000_01b3)
+            })
+    })
+}
+
+fn anchor_permille(old: &[String], new: &[String]) -> u64 {
+    let mut seen: HashMap<&str, (u32, u32)> = HashMap::new();
+    for l in old {
+        seen.entry(l).or_default().0 += 1;
+    }
+    for l in new {
+        seen.entry(l).or_default().1 += 1;
+    }
+    let unique = seen.values().filter(|c| **c == (1, 1)).count() as u64;
+    unique * 1000 / old.len().max(new.len()).max(1) as u64
+}
+
+fn diff_work(old: &[String], new: &[String]) -> u64 {
+    let mut count: HashMap<u64, i64> = HashMap::new();
+    for h in shingles(old) {
+        *count.entry(h).or_default() += 1;
+    }
+    for h in shingles(new) {
+        *count.entry(h).or_default() -= 1;
+    }
+    let unmatched: u64 = count.values().map(|c| c.unsigned_abs()).sum();
+    (old.len() + new.len()) as u64 * unmatched
+}
 const KEY_PC_WINDOW: usize = 64;
 
 fn check_name(code: i64) -> String {
@@ -429,7 +472,7 @@ fn same_shape(old: &Program, a: usize, new: &Program, b: usize) -> usize {
 }
 
 fn refine(old: &Program, new: &Program, map: &mut [Option<usize>], calls: bool) {
-    let mut votes: HashMap<usize, Option<usize>> = HashMap::new();
+    let mut votes: BTreeMap<usize, Option<usize>> = BTreeMap::new();
     for (i, m) in map.iter().enumerate() {
         let Some(j) = *m else { continue };
         let (a, b) = (old.flow[i], new.flow[j]);
@@ -620,7 +663,7 @@ fn guard_findings(
     let near: Vec<bool> = eo.iter().zip(&guard_at).map(|(e, g)| *e || *g).collect();
     let (mut weakened, mut removed) = (Vec::new(), Vec::new());
     for i in 0..old.flow.len() {
-        if !is_branch(old, i) {
+        if !is_branch(old, i) || (old.flow[i].target.is_some() && neutralized(old, i, false)) {
             continue;
         }
         let feeds = guard_at[i] || reaches(old, &near, i + 1) || {
@@ -669,13 +712,30 @@ fn guard_findings(
     });
 }
 
+const SAME_CODE_SPAN: usize = 256;
+
+fn same_code(old: &Program, a: usize, new: &Program, b: usize) -> bool {
+    for k in 0..SAME_CODE_SPAN {
+        match (old.norm.get(a + k), new.norm.get(b + k)) {
+            (Some(x), Some(y)) if x == y => {
+                if x == "exit" {
+                    return true;
+                }
+            }
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+    true
+}
+
 fn retarget_findings(
     old: &Program,
     new: &Program,
     map: &[Option<usize>],
     findings: &mut Vec<Finding>,
 ) {
-    let (mut branches, mut calls) = (Vec::new(), Vec::new());
+    let mut hits: Vec<(bool, usize, usize, String)> = Vec::new();
     for (i, m) in map.iter().enumerate() {
         let Some(j) = *m else { continue };
         let (a, b) = (old.flow[i], new.flow[j]);
@@ -692,32 +752,50 @@ fn retarget_findings(
         let Some(got) = line_of(&new.flow, tb) else {
             continue;
         };
-        if got != expected {
+        if got != expected && !same_code(old, to, new, got) {
             let d = format!(
                 "{}  now targets {:#x}, matching code moved to {:#x}",
                 line(new, j),
                 new.flow[got].pc,
                 new.flow[expected].pc
             );
-            if a.is_call {
-                calls.push(d);
-            } else {
-                branches.push(d);
-            }
+            hits.push((a.is_call, got, expected, d));
         }
     }
-    for (id, sev, title, mut d) in [
+    let gots: BTreeSet<(bool, usize)> = hits.iter().map(|h| (h.0, h.1)).collect();
+    let expects: BTreeSet<(bool, usize)> = hits.iter().map(|h| (h.0, h.2)).collect();
+    let (mut branches, mut calls, mut swaps) = (Vec::new(), Vec::new(), Vec::new());
+    for (is_call, got, expected, d) in hits {
+        if gots.contains(&(is_call, expected)) && expects.contains(&(is_call, got)) {
+            swaps.push(d);
+        } else if is_call {
+            calls.push(d);
+        } else {
+            branches.push(d);
+        }
+    }
+    const SWAP_NOTE: &str = "These targets only trade places with each other, which compiler                              reordering usually causes. A deliberate swap of two calls would look the same.";
+    for (id, sev, title, mut d, note) in [
         (
             "TM-BRANCH-RETARGET",
             Severity::High,
             "Unchanged branches now jump somewhere else",
             branches,
+            None,
         ),
         (
             "TM-CALL-RETARGET",
             Severity::High,
             "Unchanged calls now call a different function",
             calls,
+            None,
+        ),
+        (
+            "TM-TARGET-SWAP",
+            Severity::Medium,
+            "Branch or call targets swapped places",
+            swaps,
+            Some(SWAP_NOTE),
         ),
     ] {
         if d.is_empty() {
@@ -728,6 +806,7 @@ fn retarget_findings(
         if total > MAX_DETAIL {
             d.push(format!("… and {} more", total - MAX_DETAIL));
         }
+        d.extend(note.map(String::from));
         findings.push(Finding {
             id,
             severity: sev,
@@ -918,18 +997,22 @@ pub fn compare(old: &Program, new: &Program) -> Report {
 
     let a = old.norm.join("\n");
     let b = new.norm.join("\n");
-    let started = Instant::now();
-    let td = TextDiff::configure()
-        .algorithm(Algorithm::Patience)
-        .timeout(DIFF_DEADLINE)
-        .diff_lines(&a, &b);
-    let diff_exact = started.elapsed() < DIFF_DEADLINE;
+    let work = diff_work(&old.norm, &new.norm);
+    let diff_exact = work <= DIFF_WORK_BUDGET && anchor_permille(&old.norm, &new.norm) >= 1;
+    let mut config = TextDiff::configure();
+    config.algorithm(Algorithm::Patience);
+    if !diff_exact {
+        config.deadline(Instant::now());
+    }
+    let td = config.diff_lines(&a, &b);
     let map = line_map(old, new, &td);
     retarget_findings(old, new, &map, &mut findings);
     guard_findings(old, new, &td, &map, &mut findings);
     let mut cut = Vec::new();
     if !diff_exact {
-        cut.push("the instruction diff hit its time limit and is approximate".to_string());
+        cut.push(
+            "the instruction diff was too large to align exactly and is approximate".to_string(),
+        );
     }
     for (side, p, h) in [("old", old, &oh), ("new", new, &nh)] {
         if p.consts32.len() >= crate::elf::MAX_CONST_WINDOWS {

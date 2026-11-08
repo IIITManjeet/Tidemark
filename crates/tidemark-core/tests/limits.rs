@@ -130,3 +130,16 @@ fn wide_call_graph_with_many_handlers_is_cheap() {
     let (_, t) = timed(|| compare(&p, &p));
     assert!(t < Duration::from_secs(5), "took {t:?}");
 }
+
+#[test]
+fn the_same_pair_always_gets_the_same_verdict() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/sbpf");
+    let a = tidemark_core::elf::load(&std::fs::read(dir.join("demo_vault_v1_sbpfv2.so")).unwrap())
+        .unwrap();
+    let b = tidemark_core::elf::load(&std::fs::read(dir.join("demo_vault_v2_sbpfv3.so")).unwrap())
+        .unwrap();
+    let first = tidemark_core::verdict_hash(&compare(&a, &b));
+    for _ in 0..8 {
+        assert_eq!(tidemark_core::verdict_hash(&compare(&a, &b)), first);
+    }
+}

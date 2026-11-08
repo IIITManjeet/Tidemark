@@ -74,3 +74,33 @@ fn swapped_call_target_is_caught() {
     let new = load(&bytes).unwrap();
     assert!(ids(&old, &new).contains(&"TM-CALL-RETARGET"));
 }
+
+#[test]
+fn two_calls_trading_targets_is_a_medium_swap() {
+    let mut bytes = read("demo_vault_v1.so");
+    let old = load(&bytes).unwrap();
+    let calls: Vec<_> = old.flow.iter().filter(|f| f.is_call).copied().collect();
+    let a = calls[calls.len() / 2];
+    let b = *calls
+        .iter()
+        .rev()
+        .find(|c| c.target.is_some() && c.target != a.target)
+        .unwrap();
+    for (from, to) in [(a, b.target.unwrap()), (b, a.target.unwrap())] {
+        let at = text_offset(&bytes) + from.pc * 8 + 4;
+        let imm = to as i64 - from.pc as i64 - 1;
+        bytes[at..at + 4].copy_from_slice(&(imm as i32).to_le_bytes());
+    }
+    let report = compare(&old, &load(&bytes).unwrap());
+    let swap = report.findings.iter().find(|f| f.id == "TM-TARGET-SWAP");
+    assert!(
+        swap.is_some_and(|f| f.severity == tidemark_core::diff::Severity::Medium),
+        "{:?}",
+        report.findings
+    );
+    assert!(
+        !report.findings.iter().any(|f| f.id == "TM-CALL-RETARGET"),
+        "{:?}",
+        report.findings
+    );
+}
