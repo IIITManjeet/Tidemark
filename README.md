@@ -2,6 +2,10 @@
 
 **See what a Solana program upgrade actually changed, before and after it lands.**
 
+[Live app](https://tidemark-sol.vercel.app) · [Demo video (2 min)](https://www.youtube.com/watch?v=0c6auYX0RL4) · [Docs](https://tidemark-sol.vercel.app/docs) · [Release v0.1.0](https://github.com/IIITManjeet/Tidemark/releases/tag/v0.1.0) · [npm](https://www.npmjs.com/package/tidemark-wasm) · [Ledger v3 on devnet](https://explorer.solana.com/address/8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6?cluster=devnet)
+
+Built for the MLH Solana Hackathon.
+
 Any upgradeable Solana program can be replaced at any moment by whoever holds
 its upgrade authority. Users, integrators and even the multisig signers who
 approve the upgrade usually can't see what the new bytecode does. Today's open
@@ -337,6 +341,40 @@ The authority census view is still on the roadmap.
 ---
 
 ## Live on devnet
+
+### Ledger v3
+
+Ledger v3 binds each review to the deployed bytes: the program hashes the
+ProgramData ELF on chain at attest time and refuses a mismatch, and records
+the deploy slot. The demo vault upgrade is attested and co-signed 2 of 2. The
+ledger's own upgrade authority is a Squads v4 vault (2 of 3, one-hour timelock).
+
+| What | Address |
+|---|---|
+| Ledger program (v3) | [`8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6`](https://explorer.solana.com/address/8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6?cluster=devnet) |
+| Registry (2-of-2) | [`GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v`](https://explorer.solana.com/address/GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v?cluster=devnet) |
+| Entry #0 | [`8MGCYxTkAtDaq9JqZf3s8EqBGD2YJufEnLS5qEaPYLF`](https://explorer.solana.com/address/8MGCYxTkAtDaq9JqZf3s8EqBGD2YJufEnLS5qEaPYLF?cluster=devnet) |
+| Ledger upgrade multisig (Squads v4) | [`8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9`](https://explorer.solana.com/address/8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9?cluster=devnet) |
+
+| Step | Transaction |
+|---|---|
+| Ledger v3 deployed | [`4zSi2xLc…`](https://explorer.solana.com/tx/4zSi2xLcM5SeXNzVH4iFM8LXJ4BYdXBYR5G7yCCV2SVPQennbCjm7YwKoa5CdnZ7z4ACV14wZhjBHRRne5q64AR9?cluster=devnet) |
+| Registry created | [`mjjtarsA…`](https://explorer.solana.com/tx/mjjtarsAUrQ2swyu7cRN8QG9B6dZTTUj2HUESrkS4HF9LSSJocfc78qiLNyFUikHYpwLchGX7qomD3o8cyGE3aA?cluster=devnet) |
+| Threshold set to 2 | [`eqhqKE4V…`](https://explorer.solana.com/tx/eqhqKE4V1xzzX3m5f7FNUCmNSkfjECXk4EcxmMMMM2T2UjGRKFppAtTNF3k4TCYStQ2rvbL6fEvmGXwFqDnu3wP?cluster=devnet) |
+| Reviewer 1 attests, deployed bytes checked on chain | [`947PWasP…`](https://explorer.solana.com/tx/947PWasPrY9KbKzrYnF6RAVD4xSJGToYKv3BZqa5ApiJ9YHUdYhNXwGGBF5jazYyYBR5oJUMTunhm5kCfZrDr6E?cluster=devnet) |
+| Reviewer 2 re-reviews and co-signs (2/2, final) | [`4JaBaScS…`](https://explorer.solana.com/tx/4JaBaScShJ6LUNYAtpiS72DzeTkD8qQrAwLR7W6dYFWxLjvGFpRf4a6BqYkFzthDmXCUTQWWV65YDC93rwCkXzDH?cluster=devnet) |
+
+```sh
+tidemark verify-ledger   --program 8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6   --registry GpkPYw7vbvyj3mZAKQY4zbsD9Pojtnpk78Sf4AQCsc9v
+```
+
+```
+threshold  2 of 2 active reviewers
+  #0   slot 519973414  risk 3  program 5pHT…7aX3  by 9fxL…mCB1  2/2 final  deployed@519447118
+https://api.devnet.solana.com: chain OK, 1 entries, head 6067bae7f62960a2
+```
+
+### Ledger v2
 
 The ledger v2 program runs on devnet, and a real upgrade has gone through the
 full quorum flow: deploy a vault, snapshot it, upgrade it on-chain to the
