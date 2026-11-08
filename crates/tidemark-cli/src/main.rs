@@ -601,7 +601,7 @@ fn main() -> Result<()> {
                 out!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
                 out!(
-                    "{:<44}  {:<42}  {:<7}  {}",
+                    "{:<44}  {:<46}  {:<7}  {}",
                     "program",
                     "upgrade control",
                     "sec.txt",
@@ -613,7 +613,7 @@ fn main() -> Result<()> {
                         None => r.control.label(),
                     };
                     out!(
-                        "{:<44}  {:<42}  {:<7}  {}",
+                        "{:<44}  {:<46}  {:<7}  {}",
                         r.program,
                         control,
                         if r.security_txt { "yes" } else { "no" },
