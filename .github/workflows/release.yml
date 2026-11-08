@@ -1,0 +1,100 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches every package version
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"$v\"" Cargo.toml
+          test "$(node -p 'require("./npm/package.json").version')" = "$v"
+          test "$(node -p 'require("./vscode/package.json").version')" = "$v"
+
+  cli:
+    needs: check-version
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p tidemark-cli
+      - name: Package
+        shell: bash
+        run: |
+          name="tidemark-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          cp target/release/tidemark* "$name/" 2>/dev/null || true
+          rm -f "$name"/*.d "$name"/*.pdb
+          cp README.md LICENSE "$name/"
+          if [ "$RUNNER_OS" = "Windows" ]; then 7z a "$name.zip" "$name" >/dev/null; else tar czf "$name.tar.gz" "$name"; fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: tidemark-*.*
+
+  npm:
+    needs: check-version
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: cargo install wasm-bindgen-cli --version 0.2.130 --locked
+      - run: bash scripts/build-wasm.sh
+      - run: cd npm && node test.mjs
+      - name: Publish
+        if: env.NODE_AUTH_TOKEN != ''
+        run: cd npm && npm publish --provenance --access public
+
+  vscode:
+    needs: check-version
+    runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo install wasm-bindgen-cli --version 0.2.130 --locked
+      - run: bash scripts/build-vscode.sh
+      - run: cd vscode && node test.js
+      - run: cp LICENSE vscode/
+      - run: cd vscode && npx --yes @vscode/vsce@3 package -o tidemark.vsix
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: vscode/tidemark.vsix
+      - name: Publish to the VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: cd vscode && npx --yes @vscode/vsce@3 publish --packagePath tidemark.vsix
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        run: cd vscode && npx --yes ovsx@0 publish tidemark.vsix -p "$OVSX_PAT"
