@@ -54,7 +54,7 @@ export function Tools() {
           <ReviewPanel />
         </div>
         <div hidden={tab !== "ledger"}>
-          <LedgerPanel />
+          <LedgerPanel active={tab === "ledger"} />
         </div>
       </div>
     </section>
