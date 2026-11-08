@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { DEMO_PROGRAM, LEDGER_V2, REGISTRY_V2, REPO, RULES, explorer } from "@/lib/site";
-import { HeroArt, Icon, Rings, type IconName } from "./art";
+import { HeroArt, Icon, Rings, SolMark, UpgradeFlow, type IconName } from "./art";
 
 const FEATURES: [IconName, string, string, string][] = [
   ["diff", "Bytecode diff", "Disassembles both sBPF builds, v0 to v3, and aligns them so moved code doesn't hide the real change.", "/docs/rules"],
@@ -60,10 +60,16 @@ export function Landing() {
     <>
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pt-12 pb-8 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:pt-20">
         <div>
-          <span className="mb-5 inline-flex items-center gap-2 rounded-full border border-line bg-panel/70 px-3 py-1 text-xs text-muted">
-            <span className="size-1.5 rounded-full bg-green" />
-            Solana program upgrade reviewer · {RULES}
-          </span>
+          <div className="mb-5 flex flex-wrap gap-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-panel/70 px-3 py-1 text-xs text-muted">
+              <SolMark className="h-3 w-auto" id="sol-badge" />
+              Built on Solana
+            </span>
+            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-panel/70 px-3 py-1 text-xs text-muted">
+              <span className="size-1.5 rounded-full bg-green" />
+              Upgrade reviewer · {RULES}
+            </span>
+          </div>
           <h1 className="text-[clamp(2.2rem,5.5vw,3.6rem)] leading-[1.08] font-semibold tracking-tight">
             See what a program upgrade <span className="text-glow">really</span> changes
           </h1>
@@ -120,6 +126,26 @@ export function Landing() {
                 </li>
               ))}
             </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="flow" className="mx-auto max-w-6xl scroll-mt-20 px-4 pb-10 sm:px-6">
+        <div className="card p-5 sm:p-8">
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <span className="label-caps">On Solana</span>
+              <h2 className="mt-2 text-2xl font-semibold sm:text-3xl">Where Tidemark sits in an upgrade</h2>
+            </div>
+            <p className="max-w-md text-sm text-muted">
+              One signature from the upgrade authority swaps the bytes in ProgramData. Tidemark reads those bytes, not
+              the source, and the ledger ties each review to that exact deploy.
+            </p>
+          </div>
+          <div className="-mx-1 overflow-x-auto px-1">
+            <div className="min-w-[620px]">
+              <UpgradeFlow />
+            </div>
           </div>
         </div>
       </section>
@@ -193,7 +219,10 @@ export function Landing() {
       <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr] lg:items-center">
           <div>
-            <span className="label-caps">Live on devnet</span>
+            <span className="label-caps inline-flex items-center gap-2">
+              <SolMark className="h-3 w-auto" id="sol-devnet" />
+              Live on devnet
+            </span>
             <h2 className="mt-3 text-3xl font-semibold sm:text-4xl">A real upgrade, reviewed and co-signed</h2>
             <p className="mt-4 text-muted">
               A demo vault was upgraded on devnet to a build with a hidden sweep. Reviewer one attested HIGH, reviewer two

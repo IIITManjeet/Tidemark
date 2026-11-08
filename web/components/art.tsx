@@ -113,7 +113,7 @@ export function HeroArt() {
         </div>
       </div>
       <Cube className="animate-float absolute right-[2%] bottom-[16%] w-[22%]" />
-      <Orb className="animate-float-slow absolute top-[4%] right-[6%] w-[15%]" />
+      <SolCoin className="animate-float-slow absolute top-[3%] right-[5%] w-[17%]" />
       <Prism className="animate-float-slow absolute top-[30%] left-[0%] w-[16%] -rotate-12" />
       <Orb className="animate-float absolute bottom-[22%] left-[6%] w-[9%] opacity-80" />
     </div>
@@ -158,3 +158,79 @@ export function Icon({ name }: { name: keyof typeof ICONS }) {
 }
 
 export type IconName = keyof typeof ICONS;
+
+const SOL_BARS = [
+  "M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1z",
+  "M64.6 3.8C67.1 1.4 70.4 0 73.8 0h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1z",
+  "M333.1 120.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h317.4c5.8 0 8.7-7 4.6-11.1z",
+];
+
+export function SolMark({ className = "", id = "sol" }: { className?: string; id?: string }) {
+  return (
+    <svg viewBox="0 0 398 312" className={className} aria-hidden>
+      <defs>
+        <linearGradient id={id} x1="360" y1="-37" x2="141" y2="383" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#00ffa3" />
+          <stop offset="1" stopColor="#dc1fff" />
+        </linearGradient>
+      </defs>
+      {SOL_BARS.map((d) => (
+        <path key={d} d={d} fill={`url(#${id})`} />
+      ))}
+    </svg>
+  );
+}
+
+export function SolCoin({ className = "" }: { className?: string }) {
+  return (
+    <div className={`grid aspect-square place-items-center rounded-full border border-white/15 bg-[radial-gradient(circle_at_35%_30%,#2a2f4a,#0b0f1f)] shadow-[0_18px_40px_-12px_rgb(220_31_255/0.45)] ${className}`} aria-hidden>
+      <SolMark className="w-[52%]" id="sol-coin" />
+    </div>
+  );
+}
+
+function Node({ x, y, w, title, sub, tone = "line" }: { x: number; y: number; w: number; title: string; sub: string; tone?: "line" | "accent" | "orange" }) {
+  const stroke = tone === "accent" ? "#2f6bff" : tone === "orange" ? "#ff8a3d" : "#2a3556";
+  return (
+    <g>
+      <rect x={x} y={y} width={w} height="64" rx="14" fill="#121a31" stroke={stroke} strokeWidth="1.5" />
+      <text x={x + 16} y={y + 27} fill="#f3f5fb" fontSize="14" fontWeight="600">{title}</text>
+      <text x={x + 16} y={y + 47} fill="#8b95ad" fontSize="11.5" fontFamily="ui-monospace, monospace">{sub}</text>
+    </g>
+  );
+}
+
+function Arrow({ d, label, lx, ly }: { d: string; label?: string; lx?: number; ly?: number }) {
+  return (
+    <g>
+      <path d={d} fill="none" stroke="#4d6fd1" strokeWidth="1.6" markerEnd="url(#flow-arrow)" />
+      {label && <text x={lx} y={ly} fill="#8b95ad" fontSize="11" textAnchor="middle">{label}</text>}
+    </g>
+  );
+}
+
+export function UpgradeFlow() {
+  return (
+    <svg viewBox="0 0 760 300" className="h-auto w-full" role="img" aria-label="An upgrade on Solana: the upgrade key writes new bytecode to ProgramData; Tidemark diffs old against new and k-of-n reviewers co-sign the entry on the ledger.">
+      <defs>
+        <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 10 5 0 10z" fill="#4d6fd1" />
+        </marker>
+      </defs>
+      <Node x={20} y={24} w={190} title="Upgrade authority" sub="one key / multisig" tone="orange" />
+      <Node x={285} y={24} w={190} title="Program" sub="points to ProgramData" />
+      <Node x={550} y={24} w={190} title="ProgramData" sub="slot · ELF bytes" />
+      <Arrow d="M210 56h70" label="signs" lx={245} ly={48} />
+      <Arrow d="M475 56h70" />
+      <Node x={285} y={130} w={190} title="Tidemark diff" sub="old.so ⇄ new.so" tone="accent" />
+      <Arrow d="M645 88v74H480" label="deployed ELF" lx={600} ly={154} />
+      <Node x={20} y={130} w={190} title="Findings + risk" sub="verdict hash" />
+      <Arrow d="M285 162h-70" />
+      <Node x={285} y={222} w={190} title="Ledger entry" sub="code hash · deploy slot" tone="accent" />
+      <Arrow d="M380 194v24" />
+      <Node x={550} y={222} w={190} title="k-of-n reviewers" sub="re-run, then co-sign" />
+      <Arrow d="M545 254h-65" label="approve" lx={512} ly={246} />
+      <Arrow d="M115 194v60h165" label="attest" lx={150} ly={246} />
+    </svg>
+  );
+}
