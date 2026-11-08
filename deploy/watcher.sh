@@ -5,6 +5,9 @@ set -euo pipefail
 RPC="${TIDEMARK_RPC:-https://api.devnet.solana.com}"
 INTERVAL="${WATCH_INTERVAL:-30}"
 DATA="${TIDEMARK_DATA:-/data}"
+ws=()
+[ -n "${WATCH_WS:-}" ] && ws=(--ws "$WATCH_WS")
+[ "${WATCH_NO_WS:-}" = "1" ] && ws=(--no-ws)
 
 attest=()
 if [ -n "${TIDEMARK_LEDGER:-}" ]; then
@@ -19,7 +22,7 @@ fi
 mkdir -p "$DATA"
 for program in ${WATCH_PROGRAMS//,/ }; do
   echo "watching $program on $RPC every ${INTERVAL}s"
-  tidemark watch "$program" --rpc "$RPC" --dir "$DATA" --interval "$INTERVAL" "${attest[@]}" &
+  tidemark watch "$program" --rpc "$RPC" --dir "$DATA" --interval "$INTERVAL" "${ws[@]}" "${attest[@]}" &
 done
 
 wait -n

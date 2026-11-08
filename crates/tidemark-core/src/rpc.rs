@@ -106,6 +106,15 @@ pub fn parse_programdata(data: &[u8]) -> Result<ProgramData<'_>> {
 }
 
 #[cfg(feature = "net")]
+pub fn programdata_address(rpc: &str, program_id: &str) -> Result<String> {
+    let (prog, owner) = account(rpc, program_id)?;
+    if owner != UPGRADEABLE_LOADER {
+        bail!("{program_id} is not owned by the upgradeable loader (owner {owner}); it cannot be upgraded");
+    }
+    Ok(bs58::encode(parse_program_account(&prog)?).into_string())
+}
+
+#[cfg(feature = "net")]
 pub fn fetch(rpc: &str, program_id: &str) -> Result<Deployed> {
     let (prog, owner) = account(rpc, program_id)?;
     if owner != UPGRADEABLE_LOADER {

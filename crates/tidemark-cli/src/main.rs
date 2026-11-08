@@ -13,6 +13,8 @@ macro_rules! out {
     }};
 }
 
+mod ws;
+
 const DEVNET: &str = "https://api.devnet.solana.com";
 const DEFAULT_KEYPAIR: &str = "~/.config/solana/id.json";
 
@@ -89,6 +91,13 @@ enum Cmd {
         dir: PathBuf,
         #[arg(long, default_value_t = 30, help = "Seconds between checks")]
         interval: u64,
+        #[arg(
+            long,
+            help = "Websocket URL to wake on ProgramData changes (derived from --rpc by default)"
+        )]
+        ws: Option<String>,
+        #[arg(long, help = "Poll only; do not open a websocket")]
+        no_ws: bool,
         #[arg(long, help = "Check once and exit")]
         once: bool,
         #[arg(long, help = "Attest each review to this tidemark-ledger program")]
@@ -535,6 +544,8 @@ fn main() -> Result<()> {
             rpc: url,
             dir,
             interval,
+            ws: ws_url,
+            no_ws,
             once,
             attest,
             registry,
@@ -558,6 +569,17 @@ fn main() -> Result<()> {
                 }),
                 _ => None,
             };
+            let mut sock = if once || no_ws {
+                None
+            } else {
+                match ws_url.map_or_else(|| ws::derive_url(&url), Ok) {
+                    Ok(u) => Some(ws::Watcher::new(u, url.clone(), program.clone())),
+                    Err(e) => {
+                        eprintln!("{program}: websocket disabled: {e:#}");
+                        None
+                    }
+                }
+            };
             loop {
                 let target = match (&c, &k, reg) {
                     (Some(c), Some(k), Some(r)) => Some((c, &k.signer, r)),
@@ -571,7 +593,11 @@ fn main() -> Result<()> {
                 if once {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_secs(interval.max(5)));
+                let wait = std::time::Duration::from_secs(interval.max(5));
+                match sock.as_mut() {
+                    Some(w) => w.wait(wait),
+                    None => std::thread::sleep(wait),
+                }
             }
         }
         Cmd::Census {

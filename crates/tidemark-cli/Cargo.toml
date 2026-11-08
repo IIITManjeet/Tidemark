@@ -16,3 +16,4 @@ anyhow.workspace = true
 clap.workspace = true
 ed25519-dalek.workspace = true
 serde_json.workspace = true
+tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
