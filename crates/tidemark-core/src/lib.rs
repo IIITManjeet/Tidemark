@@ -6,6 +6,7 @@ pub mod elf;
 pub mod handlers;
 pub mod judge;
 pub mod ledger;
+pub mod proposal;
 pub mod rpc;
 pub mod snapshots;
 pub mod submit;
