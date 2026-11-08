@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { SolMark } from "./art";
 
-const STEP_MS = 5600;
+const STEP_MS = 6000;
 const EASE = "cubic-bezier(.2,.7,.2,1)";
 
 const play = (name: string, delay: number, dur = 0.6, extra = ""): CSSProperties => ({
@@ -65,10 +65,10 @@ function SignScene() {
 
       <div className="absolute top-1/2 right-[6%] w-[38%] -translate-y-1/2" style={play("tm-rise", 0.3)}>
         <div className="rounded-2xl border border-line-2 bg-panel p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
             <span className="text-sm font-semibold">ProgramData</span>
-            <span className="rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-link" style={play("tm-pop", 3.3, 0.4)}>
-              slot 519 460 274
+            <span className="rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] whitespace-nowrap text-link" style={play("tm-pop", 3.3, 0.4)}>
+              slot 519460274
             </span>
           </div>
           <div className="relative mt-3 h-[104px] font-mono text-[10.5px] leading-6">
@@ -81,8 +81,8 @@ function SignScene() {
             </div>
             <div className="absolute inset-0">
               {NEW_BYTES.map((b, i) => (
-                <div key={b} className="truncate rounded bg-accent/10 px-1 text-[#cfdcff]" style={play("tm-rise", 1.9 + i * 0.3, 0.5)}>
-                  {b}
+                <div key={b} className="rounded bg-panel" style={play("tm-rise", 1.9 + i * 0.3, 0.5)}>
+                  <div className="truncate rounded bg-accent/10 px-1 text-[#cfdcff]">{b}</div>
                 </div>
               ))}
             </div>
@@ -98,7 +98,7 @@ const NEW_CODE = ["ldxdw r1, [r10-136]", "ldxdw r2, [r10-96]", "ja +0x1", "ldxdw
 
 function Code({ title, lines, tone, changed, base }: { title: string; lines: string[]; tone: "old" | "new"; changed: number[]; base: number }) {
   return (
-    <div className="min-w-0 flex-1 rounded-2xl border border-line-2 bg-panel p-3">
+    <div className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-line-2 bg-panel p-3">
       <div className="mb-2 flex items-center justify-between font-mono text-[10.5px] text-faint">
         <span>{title}</span>
         <span>sBPF v3</span>
@@ -111,9 +111,11 @@ function Code({ title, lines, tone, changed, base }: { title: string; lines: str
             <div key={i} className="relative" style={play("tm-rise", base + i * 0.12, 0.45)}>
               <div className="truncate rounded px-1.5 text-muted">{l}</div>
               {hit && (
-                <div className={`absolute inset-0 truncate rounded px-1.5 ${hl}`} style={play("tm-fade", 2 + i * 0.15, 0.4)}>
-                  {tone === "old" ? "- " : "+ "}
-                  {l}
+                <div className="absolute inset-0 rounded bg-panel" style={play("tm-fade", 2 + i * 0.15, 0.4)}>
+                  <div className={`h-full truncate rounded px-1.5 ${hl}`}>
+                    {tone === "old" ? "- " : "+ "}
+                    {l}
+                  </div>
                 </div>
               )}
             </div>
@@ -127,7 +129,7 @@ function Code({ title, lines, tone, changed, base }: { title: string; lines: str
 function DiffScene() {
   return (
     <Frame label="Tidemark decodes both builds and lines up the changed instructions">
-      <div className="absolute inset-[7%] flex gap-3">
+      <div className="absolute inset-x-[7%] top-[7%] bottom-[17%] flex gap-3">
         <Code title="old.so" lines={OLD_CODE} tone="old" changed={[2, 5]} base={0.1} />
         <Code title="new.so" lines={NEW_CODE} tone="new" changed={[2, 4]} base={0.3} />
         <div className="pointer-events-none absolute inset-x-0 top-0 h-[9%] bg-gradient-to-b from-transparent via-glow/25 to-transparent" style={play("tm-scan", 0.8, 2.2, "infinite")} />
@@ -325,7 +327,6 @@ function Thumb({ i }: { i: number }) {
 
 export function HowItWorks() {
   const [active, setActive] = useState(0);
-  const [paused, setPaused] = useState(false);
   const [cycle, setCycle] = useState(0);
   const still = useRef(false);
 
@@ -334,10 +335,10 @@ export function HowItWorks() {
   }, []);
 
   useEffect(() => {
-    if (paused || still.current) return;
+    if (still.current) return;
     const t = setTimeout(() => setActive((a) => (a + 1) % STEPS.length), STEP_MS);
     return () => clearTimeout(t);
-  }, [active, paused, cycle]);
+  }, [active, cycle]);
 
   const pick = (i: number) => {
     setActive(i);
@@ -348,14 +349,7 @@ export function HowItWorks() {
   const Scene = step.Scene;
 
   return (
-    <section
-      id="how"
-      className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={() => setPaused(false)}
-    >
+    <section id="how" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-16 sm:px-6">
       <div className="mx-auto mb-10 max-w-2xl text-center">
         <span className="inline-flex items-center gap-2 rounded-full border border-line bg-panel/70 px-3 py-1 text-xs text-muted">
           <span className="size-1.5 rounded-full bg-accent" />
@@ -410,9 +404,9 @@ export function HowItWorks() {
                 <span className="mt-auto rounded-md border border-line-2 bg-bg/60 px-2 py-0.5 font-mono text-[10.5px] text-muted">{s.tag}</span>
                 {on && (
                   <span
-                    key={`p${cycle}-${paused}`}
+                    key={`p${cycle}`}
                     className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-accent"
-                    style={paused ? undefined : { animation: `tm-grow ${STEP_MS}ms linear both` }}
+                    style={{ animation: `tm-grow ${STEP_MS}ms linear both` }}
                   />
                 )}
               </button>
