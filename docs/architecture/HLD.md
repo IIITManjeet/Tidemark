@@ -100,9 +100,10 @@ Anyone reads the registry, walks attestations in index order, recomputes each
 - Entries are hash-linked and bound to their registry and slot, so edits,
   deletions and reordering are detectable by anyone with an RPC endpoint.
   Cross-checking several RPCs reduces trust in any single provider.
-- Open item: the ledger program's own upgrade authority is a single key on
-  devnet. Production deployments should put it behind a multisig with a
-  timelock or make the program immutable.
+- The devnet ledger's upgrade authority is a Squads v4 vault: 2 of 3 members,
+  one-hour timelock. The member keys are held by one maintainer on devnet;
+  production needs independent members, a longer timelock, and eventually an
+  immutable program.
 
 ## 7. Cost model
 

@@ -58,8 +58,10 @@ export default function Page() {
         ]}
       />
       <Callout tone="warn" title="Who controls the ledger itself">
-        The ledger program is upgradeable by a single key today. The plan is a Squads multisig with a long timelock while it
-        beds in, then freezing it; v3 is built for SBPF v3 so it can be frozen after SIMD-0500.
+        The devnet v2 ledger can only be upgraded through a Squads v4 multisig: 2 of 3 members approve, then a one-hour
+        timelock runs before the upgrade can execute. On devnet one maintainer holds all three member keys, so this
+        demonstrates the mechanism, not independent control. Next come independent members, a longer timelock, and
+        freezing the program; v3 is built for SBPF v3 so it can still be frozen after SIMD-0500.
       </Callout>
     </DocPage>
   );
