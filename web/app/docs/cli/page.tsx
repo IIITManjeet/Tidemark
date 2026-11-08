@@ -25,14 +25,36 @@ export default function Page() {
           [<C key="3">--fail-on LEVEL</C>, "Exit 2 at or above info, low, medium, high or critical"],
           [<C key="4">--cache DIR</C>, "Reuse earlier reviews keyed by both hashes and the rules version"],
           [<C key="5">--judge</C>, "Add the advisory AI judge (needs GEMINI_KEY)"],
+          [<C key="6">--isolate</C>, "Parse and diff in a separate locked-down process (see below)"],
         ]}
       />
+
+      <H2 id="isolate">Isolated reviews</H2>
+      <P>
+        With <C>--isolate</C>, the CLI reads both files, then runs the review in a child process with an empty environment
+        that receives the bytes on stdin and returns the report on stdout. The report, verdict hash and exit code are the
+        same as without the flag. A crash, a timeout (120 s) or bad output is an error, never a pass.
+      </P>
+      <P>
+        On Linux the child also denies itself all filesystem access with Landlock and sets resource limits: 2 GiB of
+        memory, 60 s of CPU, no file writes, no new processes. On macOS and Windows only the separate process and the
+        timeout apply. Network access is not blocked yet.
+      </P>
 
       <H2 id="inspect">Inspect and fetch</H2>
       <Code>{`tidemark inspect program.so\ntidemark fetch <PROGRAM_ID> --rpc https://api.devnet.solana.com -o program.so`}</Code>
       <P>
         <C>fetch</C> reads ProgramData, strips the 45-byte header and trailing padding, and prints the upgrade authority and
         last deploy slot.
+      </P>
+
+      <H2 id="proposal">Review a Squads upgrade proposal</H2>
+      <Code>{`tidemark proposal --multisig <MULTISIG> --index <N> --rpc https://api.mainnet-beta.solana.com`}</Code>
+      <P>
+        Before you approve, reads Squads v4 vault transaction <C>N</C>, finds each program upgrade in it, fetches the
+        buffer it would deploy and the program that is live now, and reviews the change exactly like <C>diff</C>. It
+        takes the same <C>--json</C>, <C>--hunks</C> and <C>--fail-on</C> flags and exits 2 at or above the level.
+        Proposals that load accounts through an address lookup table are not read yet.
       </P>
 
       <H2 id="watch">Watch a program</H2>
@@ -47,10 +69,20 @@ export default function Page() {
       <P>Classifies each program as immutable, single key, multisig or governance, or program-controlled.</P>
       <P>
         A Squads v4 vault is a plain system account, so name its multisig with <C>--squads MULTISIG</C> (repeatable).
-        Census derives that multisig&apos;s vaults and reports <C>multisig (Squads v4)</C> when one of them holds the
-        upgrade authority.
+        Census derives that multisig&apos;s vaults and, when one of them holds the upgrade authority, reads the multisig
+        account and reports its threshold, voting members and timelock, for example{" "}
+        <C>multisig (Squads v4, 2 of 3, 1h timelock)</C>.
       </P>
       <Code>{`tidemark census 8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6 \\\n  --squads 8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9`}</Code>
+
+      <H2 id="sandwich">Scan for sandwiches</H2>
+      <Code>{`tidemark sandwich --slot <N> --to <M> --rpc https://api.mainnet-beta.solana.com --json found.json`}</Code>
+      <P>
+        Flags a swap, a same-direction swap by someone else on the same pool, and the first trader swapping back, all in
+        one slot, then prints a Merkle root over the detections. It reads token balance changes, so multi-hop routes and
+        native-SOL legs are missed, and a market maker trading around retail flow can be flagged. Rate-limited slots are
+        retried; a slot that still fails stops the scan rather than leaving a gap in the root.
+      </P>
 
       <H2 id="ledger">Ledger commands</H2>
       <DocTable

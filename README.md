@@ -57,6 +57,8 @@ handler, all from bytecode alone.
   v3 hashes the deployed ELF on chain, refuses a mismatch and records the deploy
   slot. The ledger's own upgrade key sits behind a Squads multisig with a
   timelock.
+- **Untrusted input stays contained.** `--isolate` runs the review in a
+  separate process; on Linux it gets no filesystem and hard resource limits.
 - **Wherever you work.** Web app (nothing leaves the browser), CLI and CI gate,
   npm package, VS Code extension, upgrade watcher and authority census.
 - **AI that can only make you more careful.** An optional Gemini jury explains
@@ -296,10 +298,13 @@ The watcher needs to be running before an upgrade to have the old version;
 subscribing to loader `Upgrade` instructions over websockets, so no version
 is missed between polls, is still on the roadmap.
 
-### 10. Multisig pre-approval review · Roadmap
-When an upgrade proposal is created, Tidemark diffs the proposal's buffer
-against the live program and posts the report to signers during the timelock
-window, so nobody approves bytecode they haven't seen.
+### 10. Multisig pre-approval review · Shipped (CLI, Squads v4)
+`tidemark proposal --multisig <MS> --index <N>` reads a Squads v4 vault
+transaction, finds each program upgrade in it, fetches the buffer it would
+deploy and the live program, and prints the same review as `diff`, with the
+same `--json` and `--fail-on`. A signer can see the change before approving.
+Still on the roadmap: posting the report to signers automatically when a
+proposal is created, and proposals that use address lookup tables.
 
 ### 11. Upgrade-authority census · Shipped (CLI)
 `tidemark census <program ids…>` (or `--file`) classifies who can upgrade each
@@ -312,8 +317,9 @@ program and whether it embeds a `security.txt`:
   private key exists and only a program can sign. A Squads v4 vault is a plain
   system account, so it shows up this way unless you name its multisig with
   `--squads <MULTISIG>`: census derives that multisig's vaults and, when one is
-  the authority and the multisig is owned by Squads v4, reports
-  **multisig (Squads v4)** with the multisig and vault index.
+  the authority and the multisig is owned by Squads v4, reads the multisig
+  account and reports its threshold, voting members and timelock, e.g.
+  **multisig (Squads v4, 2 of 3, 1h timelock)**.
 
 ```
 $ tidemark census --rpc https://api.mainnet-beta.solana.com JUP6Lkb… whirLbM… MarBmsS…
@@ -324,23 +330,34 @@ MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD   program-controlled (PDA)   yes
 
 ```
 $ tidemark census 8f43wqFP… BFZg7MYz… --squads 8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9
-8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6  multisig (Squads v4)  no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
-BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc  multisig (Squads v4)  no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
+8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6  multisig (Squads v4, 2 of 3, 1h timelock)   no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
+BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc  multisig (Squads v4, 2 of 3, 1h timelock)   no  GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2
 ```
 
-Reading multisig thresholds and timelocks, verified-build status and a public
-dashboard are still on the roadmap.
+Verified-build status and a public dashboard are still on the roadmap.
 
-### 12. MEV transparency layer · Roadmap
-A slot scanner detects sandwich patterns (buy → victim → sell on one pool in
-one slot). It publishes a daily Merkle root of detections to the same ledger,
-so validator behaviour becomes publicly verifiable.
+### 12. MEV transparency layer · Shipped (scanner), ledger publishing on the roadmap
+`tidemark sandwich --slot N --to M --rpc <mainnet RPC>` reads each block and
+flags a swap by one fee payer, a same-direction swap by someone else on the same
+pool, then the first fee payer swapping back, all in one slot. It prints each
+detection with the three signatures and the front-runner's raw gain, then a
+Merkle root over the detections so a list can be committed to later. Swaps are
+read from token balance changes, so multi-hop routes, native-SOL legs and
+attackers that split signers are missed, and a market maker trading both sides
+of retail flow can be flagged. Publishing the daily root to the ledger is
+still on the roadmap.
 
-### 13. Hardened analysis runner · Roadmap
-The binaries Tidemark analyzes are untrusted, so parsing and verifier tests run
-in a locked-down process: no network, read-only filesystem, a minimal syscall
-allowlist (seccomp-bpf, Landlock) and a distroless container image. Signing
-keys never share a process with untrusted input.
+### 13. Isolated analysis runner · Shipped (Linux limits), partly roadmap
+`tidemark diff OLD NEW --isolate` reads both files, then reviews them in a
+child process with an empty environment that gets the bytes on stdin and
+returns the report on stdout, so signing keys and files never share a process
+with untrusted input. The report, verdict hash and exit code are identical to a
+normal run; a crash, a 120 s timeout or malformed output is an error, never a
+pass. On Linux the child also denies itself all filesystem access with Landlock
+and runs under rlimits (2 GiB memory, 60 s CPU, no file writes, no new
+processes). On macOS and Windows only the separate process and the timeout
+apply. Still on the roadmap: a seccomp syscall allowlist (network is not
+blocked yet) and a distroless image.
 
 ### 14. Distribution: npm and VS Code · Shipped
 - **npm package** (`npm/`, Shipped): `tidemark-core` compiled to WebAssembly.
