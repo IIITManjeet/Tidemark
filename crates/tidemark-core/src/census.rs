@@ -1,5 +1,6 @@
 use crate::submit::{decode_pubkey, find_pda, on_curve};
 use serde::Serialize;
+use sha2::Digest;
 
 pub const SQUADS_V4: &str = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf";
 pub const SQUADS_V3: &str = "SMPLecH534NA9acpos4G6x7uf3LWbCAwZQE9e8ZekMu";
@@ -17,10 +18,18 @@ const LEGACY_LOADERS: [&str; 3] = [
 pub enum Control {
     Immutable,
     SingleKey,
-    Multisig { program: String },
-    SquadsVault { multisig: String, index: u8 },
+    Multisig {
+        program: String,
+    },
+    SquadsVault {
+        multisig: String,
+        index: u8,
+        config: Option<SquadsConfig>,
+    },
     Governance,
-    ProgramControlled { owner: Option<String> },
+    ProgramControlled {
+        owner: Option<String>,
+    },
 }
 
 impl Control {
@@ -30,6 +39,14 @@ impl Control {
             Control::SingleKey => "single key".into(),
             Control::Multisig { program } if program == SQUADS_V4 => "multisig (Squads v4)".into(),
             Control::Multisig { .. } => "multisig (Squads v3)".into(),
+            Control::SquadsVault {
+                config: Some(c), ..
+            } => format!(
+                "multisig (Squads v4, {} of {}, {} timelock)",
+                c.threshold,
+                c.voters,
+                timelock(c.time_lock)
+            ),
             Control::SquadsVault { .. } => "multisig (Squads v4)".into(),
             Control::Governance => "governance (SPL Governance)".into(),
             Control::ProgramControlled { owner: Some(o) } => {
@@ -54,6 +71,54 @@ pub fn classify(authority: Option<&str>, authority_owner: Option<&str>) -> anyho
     }
     Ok(Control::ProgramControlled {
         owner: authority_owner.filter(|o| *o != SYSTEM).map(String::from),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SquadsConfig {
+    pub threshold: u16,
+    pub members: u16,
+    pub voters: u16,
+    pub time_lock: u32,
+}
+
+fn timelock(secs: u32) -> String {
+    match secs {
+        0 => "no".into(),
+        s if s % 86_400 == 0 => format!("{}d", s / 86_400),
+        s if s % 3_600 == 0 => format!("{}h", s / 3_600),
+        s if s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{s}s"),
+    }
+}
+
+pub fn parse_squads_multisig(data: &[u8]) -> anyhow::Result<SquadsConfig> {
+    let disc = sha2::Sha256::digest(b"account:Multisig");
+    anyhow::ensure!(
+        data.len() >= 8 && data[..8] == disc[..8],
+        "not a Squads v4 multisig account"
+    );
+    let short = || anyhow::anyhow!("Squads multisig account is truncated");
+    let at = |o: usize, n: usize| data.get(o..o + n).ok_or_else(short);
+    let mut o = 8 + 32 + 32;
+    let threshold = u16::from_le_bytes(at(o, 2)?.try_into()?);
+    let time_lock = u32::from_le_bytes(at(o + 2, 4)?.try_into()?);
+    o += 2 + 4 + 8 + 8;
+    o += match at(o, 1)?[0] {
+        0 => 1,
+        1 => 33,
+        _ => anyhow::bail!("bad rent collector in Squads multisig"),
+    };
+    o += 1;
+    let n = u32::from_le_bytes(at(o, 4)?.try_into()?) as usize;
+    o += 4;
+    let members = at(o, n.checked_mul(33).ok_or_else(short)?)?;
+    let voters = members.chunks(33).filter(|m| m[32] & 2 != 0).count();
+    Ok(SquadsConfig {
+        threshold,
+        members: u16::try_from(n)?,
+        voters: u16::try_from(voters)?,
+        time_lock,
     })
 }
 
@@ -103,6 +168,20 @@ fn owner_of(rpc: &str, key: &str) -> anyhow::Result<Option<String>> {
 }
 
 #[cfg(feature = "net")]
+fn squads_config(rpc: &str, multisig: &str) -> anyhow::Result<SquadsConfig> {
+    use base64::Engine;
+    let r = crate::rpc::call(
+        rpc,
+        "getAccountInfo",
+        serde_json::json!([multisig, {"encoding": "base64", "commitment": "finalized"}]),
+    )?;
+    let data = r["value"]["data"][0]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("multisig {multisig} not found"))?;
+    parse_squads_multisig(&base64::engine::general_purpose::STANDARD.decode(data)?)
+}
+
+#[cfg(feature = "net")]
 pub fn survey(rpc: &str, program: &str, squads: &[String]) -> Entry {
     let mut e = Entry {
         program: program.to_string(),
@@ -131,7 +210,12 @@ pub fn survey(rpc: &str, program: &str, squads: &[String]) -> Entry {
         if let (Control::ProgramControlled { .. }, Some(a)) = (&e.control, &d.upgrade_authority) {
             if let Some((multisig, index)) = squads_vault_of(a, squads)? {
                 if owner_of(rpc, &multisig)?.as_deref() == Some(SQUADS_V4) {
-                    e.control = Control::SquadsVault { multisig, index };
+                    let config = squads_config(rpc, &multisig).ok();
+                    e.control = Control::SquadsVault {
+                        multisig,
+                        index,
+                        config,
+                    };
                 }
             }
         }
@@ -161,6 +245,59 @@ mod tests {
             Some((ms.to_string(), 0))
         );
         assert_eq!(squads_vault_of(PDA, &[ms.to_string()]).unwrap(), None);
+    }
+
+    fn multisig_account(rent_collector: bool, perms: &[u8]) -> Vec<u8> {
+        let mut d = sha2::Sha256::digest(b"account:Multisig")[..8].to_vec();
+        d.extend([0u8; 64]);
+        d.extend(2u16.to_le_bytes());
+        d.extend(3600u32.to_le_bytes());
+        d.extend([0u8; 16]);
+        if rent_collector {
+            d.push(1);
+            d.extend([9u8; 32]);
+        } else {
+            d.push(0);
+        }
+        d.push(255);
+        d.extend((perms.len() as u32).to_le_bytes());
+        for p in perms {
+            d.extend([5u8; 32]);
+            d.push(*p);
+        }
+        d
+    }
+
+    #[test]
+    fn squads_multisig_config_is_read() {
+        for rc in [false, true] {
+            let c = parse_squads_multisig(&multisig_account(rc, &[7, 7, 1])).unwrap();
+            assert_eq!(
+                c,
+                SquadsConfig {
+                    threshold: 2,
+                    members: 3,
+                    voters: 2,
+                    time_lock: 3600
+                }
+            );
+        }
+        let label = Control::SquadsVault {
+            multisig: String::new(),
+            index: 0,
+            config: Some(parse_squads_multisig(&multisig_account(false, &[7, 7, 7])).unwrap()),
+        }
+        .label();
+        assert_eq!(label, "multisig (Squads v4, 2 of 3, 1h timelock)");
+    }
+
+    #[test]
+    fn bad_squads_accounts_are_refused() {
+        let good = multisig_account(false, &[7, 7, 7]);
+        assert!(parse_squads_multisig(&good[..good.len() - 1]).is_err());
+        let mut wrong = good.clone();
+        wrong[0] ^= 1;
+        assert!(parse_squads_multisig(&wrong).is_err());
     }
 
     #[test]
