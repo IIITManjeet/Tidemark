@@ -35,6 +35,11 @@ jobs:
           set +e
           cargo run -q -p tidemark-cli -- diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
           test $? -eq 2
+      - name: Review demo upgrade in the isolated runner (same verdict, exit 2)
+        run: |
+          set +e
+          cargo run -q -p tidemark-cli -- diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so --isolate
+          test $? -eq 2
 
   watcher-image:
     runs-on: ubuntu-latest

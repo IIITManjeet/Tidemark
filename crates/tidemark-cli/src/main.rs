@@ -7,6 +7,8 @@ use tidemark_core::diff::{self, Report, Severity};
 use tidemark_core::submit::{self, Ctx, Pubkey};
 use tidemark_core::{elf, ledger, rpc, verdict_hash, verdict_risk};
 
+mod isolate;
+
 macro_rules! out {
     ($($t:tt)*) => {{
         let _ = writeln!(std::io::stdout(), $($t)*);
@@ -65,7 +67,14 @@ enum Cmd {
             help = "Ask an AI jury about the findings (needs GEMINI_KEY); advisory, never part of the verdict hash"
         )]
         judge: bool,
+        #[arg(
+            long,
+            help = "Parse and diff the binaries in a locked-down child process (resource limits and Landlock on Linux)"
+        )]
+        isolate: bool,
     },
+    #[command(hide = true, name = "__review")]
+    Review,
     #[command(about = "Summarize one program binary")]
     Inspect { file: PathBuf },
     #[command(about = "Download deployed bytecode and show its upgrade authority")]
@@ -437,6 +446,7 @@ fn main() -> Result<()> {
             fail_on,
             cache,
             judge,
+            isolate,
         } => {
             let gate = Severity::parse(&fail_on)?;
             let (a, b) = (read(&old)?, read(&new)?);
@@ -448,8 +458,14 @@ fn main() -> Result<()> {
             let e = match hit {
                 Some(e) => e,
                 None => {
-                    let r = diff::compare(&elf::load(&a)?, &elf::load(&b)?);
-                    let e = tidemark_core::cache::entry(&r);
+                    let e = if isolate {
+                        isolate::review(&a, &b)?
+                    } else {
+                        tidemark_core::cache::entry(&diff::compare(
+                            &elf::load(&a)?,
+                            &elf::load(&b)?,
+                        ))
+                    };
                     if let Some(d) = &cache {
                         tidemark_core::cache::put(d, &sa, &sb, &e)?;
                     }
@@ -495,6 +511,7 @@ fn main() -> Result<()> {
                 std::process::exit(2);
             }
         }
+        Cmd::Review => isolate::child()?,
         Cmd::Inspect { file } => {
             let p = elf::load(&read(&file)?)?;
             out!("sha256         {}", p.sha256);
