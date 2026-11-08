@@ -436,6 +436,7 @@ bash scripts/build-fixtures.sh      # on-chain programs + demo fixtures (Solana 
   npm, CI gate, rules, ledger, AI judge, and the security model. Build it with
   `bash scripts/build-web.sh` and open `web/out/index.html` through any static
   server.
+- [Testing on real programs](docs/TESTING.md): 67 mainnet programs, determinism and web/CLI parity
 - [Releasing](docs/RELEASING.md): npm, VS Code Marketplace, Open VSX, Vercel and Railway
 - [High-level design](docs/architecture/HLD.md)
 - [Low-level design](docs/architecture/LLD.md)
