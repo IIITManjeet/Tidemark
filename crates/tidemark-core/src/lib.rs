@@ -4,6 +4,7 @@ pub mod diff;
 pub mod disasm;
 pub mod elf;
 pub mod handlers;
+pub mod judge;
 pub mod ledger;
 pub mod rpc;
 pub mod snapshots;

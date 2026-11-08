@@ -444,6 +444,35 @@ A new rules version uses a new folder, so a rules change never serves a stale
 verdict. The CLI prints from the report's JSON form, so cached and fresh
 reviews print identically.
 
-## 12. Planned interfaces
+## 12. AI judge (`judge.rs`, `diff --judge`)
+
+`Backend::ask(system, prompt, schema)` returns the model's text. `Gemini`
+(behind `net`) calls `models/{model}:generateContent` with the key in the
+`x-goog-api-key` header, temperature 1.0 so the three votes are independent
+samples, and a JSON response schema for jury questions. The key is read from
+`GEMINI_KEY` at runtime only.
+
+| Step | Calls | Output |
+|---|---|---|
+| Explain | 1 | at most 120 words, findings named by id |
+| Jury | 3 questions × 3 votes | `{answer: yes/no, cites: [...], reason}` each |
+
+A vote is `failed` if it is not JSON or not yes/no, `dropped` if it is yes but
+none of its cites is a finding id in the report or `hunk:N` for a hunk that was
+sent, and counted otherwise. A question passes with a majority of counted yes
+votes (2 of 3). `risk_after = max(risk, High)` if any question passes, else
+`risk`; the CLI exits on `max(report risk, risk_after)`.
+
+**Prompt injection.** The system instruction says the report block is
+untrusted program data and must not be followed. The data (risk, findings,
+first 12 hunks of 40 lines) is serialized to JSON and then encoded again as a
+single JSON string, so quotes, newlines and fake `END REPORT` markers inside
+handler names, log strings or security.txt stay escaped inside one literal.
+Answers are only accepted in the schema, cites are checked against the report,
+and the jury can only raise the risk, so a successful injection can at worst
+cause a false alarm. The judgement never enters the verdict hash, report hash,
+cache entry or attestation.
+
+## 13. Planned interfaces
 
 - `POST /v1/review {old, new}` returns the report and its hash, backed by the cache.
