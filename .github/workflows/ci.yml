@@ -36,6 +36,17 @@ jobs:
           cargo run -q -p tidemark-cli -- diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
           test $? -eq 2
 
+  watcher-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t tidemark-watcher .
+      - name: Entrypoint refuses to start without programs
+        run: |
+          set +e
+          docker run --rm tidemark-watcher
+          test $? -ne 0
+
   proofs:
     runs-on: ubuntu-latest
     timeout-minutes: 30

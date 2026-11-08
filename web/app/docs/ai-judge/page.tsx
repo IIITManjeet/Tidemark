@@ -44,6 +44,12 @@ export default function Page() {
         Without <C>GEMINI_KEY</C> the CLI says the judge was skipped and carries on. <C>GEMINI_MODEL</C> picks the model;
         rate-limited calls are retried with backoff.
       </Callout>
+      <H2 id="web">In the web app</H2>
+      <P>
+        After a review in <C>/app</C>, the AI judge panel takes a Gemini key and model. The browser sends the same
+        prompts straight to Google and hands the answers back to the WebAssembly engine, which counts the votes with the
+        same code as the CLI. The key is held in the page only and never stored or sent anywhere else.
+      </P>
       <P>The judge sits behind a small backend interface, so another yes/no model can be added as one file.</P>
     </DocPage>
   );

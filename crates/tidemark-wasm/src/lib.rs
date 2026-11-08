@@ -1,7 +1,9 @@
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tidemark_core::{bs58_encode, diff, elf, handlers, ledger, submit};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use tidemark_core::{bs58_encode, diff, elf, handlers, judge, ledger, submit};
 use wasm_bindgen::prelude::*;
 
 fn err(e: impl std::fmt::Display) -> JsError {
@@ -178,6 +180,53 @@ pub fn deployed_elf(programdata: &[u8]) -> Result<Vec<u8>, JsError> {
     deployed_parts(programdata).map(|(_, _, e)| e).map_err(err)
 }
 
+#[wasm_bindgen(js_name = judgeRequests)]
+pub fn judge_requests(report: &str) -> Result<String, JsError> {
+    let report: Value = serde_json::from_str(report).map_err(err)?;
+    Ok(judge::requests(&report).to_string())
+}
+
+#[derive(Deserialize)]
+struct Answer {
+    text: Option<String>,
+    error: Option<String>,
+}
+
+struct Replay {
+    name: String,
+    answers: RefCell<VecDeque<Answer>>,
+}
+
+impl judge::Backend for Replay {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn ask(&self, _: &str, _: &str, _: Option<&Value>) -> anyhow::Result<String> {
+        match self.answers.borrow_mut().pop_front() {
+            Some(Answer { text: Some(t), .. }) => Ok(t),
+            Some(Answer { error: Some(e), .. }) => anyhow::bail!(e),
+            _ => anyhow::bail!("no answer"),
+        }
+    }
+}
+
+pub fn judge_json(report: &Value, backend: &str, answers: &str) -> anyhow::Result<Value> {
+    let replay = Replay {
+        name: backend.to_string(),
+        answers: RefCell::new(serde_json::from_str(answers)?),
+    };
+    Ok(serde_json::to_value(judge::judge(&replay, report)?)?)
+}
+
+#[wasm_bindgen]
+pub fn judge(report: &str, backend: &str, answers: &str) -> Result<String, JsError> {
+    let report: Value = serde_json::from_str(report).map_err(err)?;
+    judge_json(&report, backend, answers)
+        .map(|v| v.to_string())
+        .map_err(err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +244,29 @@ mod tests {
         assert_eq!(v["report"]["risk"], "high");
         let saved: Value = serde_json::from_slice(&fixture("demo_report.json")).unwrap();
         assert_eq!(v["report"]["findings"], saved["findings"]);
+    }
+
+    #[test]
+    fn judge_replays_answers_in_order() {
+        let v = review_json(&fixture("demo_vault_v1.so"), &fixture("demo_vault_v2.so")).unwrap();
+        let mut report = v["report"].clone();
+        report["risk"] = json!("low");
+        let yes = json!({ "answer": "yes", "cites": ["TM-KEY-ADD"], "reason": "r" });
+        let no = json!({ "answer": "no", "cites": [], "reason": "r" });
+        let ballot =
+            json!({ "single-key-moves-funds": yes, "check-removed": no, "new-drain-path": no })
+                .to_string();
+        let answers = json!([
+            { "error": "HTTP 429" },
+            { "text": ballot },
+            { "text": ballot },
+            { "text": "not json" },
+        ]);
+        let j = judge_json(&report, "test", &answers.to_string()).unwrap();
+        assert_eq!(j["explanation_error"], "HTTP 429");
+        assert_eq!(j["questions"][0]["yes"], 2);
+        assert_eq!(j["questions"][0]["failed"], 1);
+        assert_eq!(j["risk_after"], "high");
     }
 
     #[test]

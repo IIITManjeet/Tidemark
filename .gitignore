@@ -18,3 +18,6 @@ live/
 npm/dist/
 vscode/wasm/
 *.vsix
+
+# vercel prebuilt output
+.vercel/

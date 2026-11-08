@@ -165,6 +165,16 @@ pub fn explain_prompt(report: &Value) -> String {
     )
 }
 
+pub fn requests(report: &Value) -> Value {
+    json!({
+        "system": SYSTEM,
+        "explain": explain_prompt(report),
+        "jury": jury_prompt(report),
+        "schema": vote_schema(),
+        "votes": VOTES,
+    })
+}
+
 pub fn printable(s: &str) -> String {
     s.chars()
         .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
@@ -448,6 +458,15 @@ mod tests {
         assert_eq!((t[0].yes, t[0].failed), (1, 2));
         assert_eq!(t[0].errors.len(), 2);
         assert_eq!((t[1].no, t[1].failed), (2, 1));
+    }
+
+    #[test]
+    fn requests_match_what_judge_asks() {
+        let r = report("low");
+        let q = requests(&r);
+        assert_eq!(q["jury"], jury_prompt(&r));
+        assert_eq!(q["explain"], explain_prompt(&r));
+        assert_eq!(q["votes"], VOTES);
     }
 
     #[test]

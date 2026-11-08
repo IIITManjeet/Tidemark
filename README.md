@@ -142,10 +142,14 @@ whoever holds a key file.
 - **Confirmed writes**: every transaction is polled until confirmed, and a
   failed one is reported as a failure.
 
-Remaining trust assumption: the ledger program on devnet is still upgradeable
-by a single key (tracked in #15, to move behind a multisig with a timelock and
-then be frozen). `verify-ledger` prints the ledger's own upgrade authority and
-warns if it was redeployed after entries were written.
+Who controls the ledger itself: the devnet v2 ledger's upgrade authority is a
+Squads v4 vault (`GoEyAVg55y1u327W4x26zwbFoTQ3ChQEHzvQqrkBQCf2`, multisig
+`8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9`): 2 of 3 members must approve an
+upgrade, and it can only execute an hour after approval. On devnet all three
+member keys are held by one maintainer, so this shows the mechanism rather than
+real key separation. The plan in #15 is independent members, a longer timelock,
+then freezing the program. `verify-ledger` prints the ledger's upgrade authority
+and warns if it was redeployed after entries were written.
 
 ### 4. CI gate for safe code shipping · Shipped
 `tidemark diff` exits with code `2` when the risk reaches the `--fail-on` level
@@ -431,6 +435,7 @@ bash scripts/build-fixtures.sh      # on-chain programs + demo fixtures (Solana 
   npm, CI gate, rules, ledger, AI judge, and the security model. Build it with
   `bash scripts/build-web.sh` and open `web/out/index.html` through any static
   server.
+- [Releasing](docs/RELEASING.md): npm, VS Code Marketplace, Open VSX, Vercel and Railway
 - [High-level design](docs/architecture/HLD.md)
 - [Low-level design](docs/architecture/LLD.md)
 

@@ -113,7 +113,7 @@ export function HeroArt() {
         </div>
       </div>
       <Cube className="animate-float absolute right-[2%] bottom-[16%] w-[22%]" />
-      <Orb className="animate-float-slow absolute top-[4%] right-[6%] w-[15%]" />
+      <SolCoin className="animate-float-slow absolute top-[3%] right-[5%] w-[17%]" />
       <Prism className="animate-float-slow absolute top-[30%] left-[0%] w-[16%] -rotate-12" />
       <Orb className="animate-float absolute bottom-[22%] left-[6%] w-[9%] opacity-80" />
     </div>
@@ -158,3 +158,33 @@ export function Icon({ name }: { name: keyof typeof ICONS }) {
 }
 
 export type IconName = keyof typeof ICONS;
+
+const SOL_BARS = [
+  "M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1z",
+  "M64.6 3.8C67.1 1.4 70.4 0 73.8 0h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1z",
+  "M333.1 120.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h317.4c5.8 0 8.7-7 4.6-11.1z",
+];
+
+export function SolMark({ className = "", id = "sol" }: { className?: string; id?: string }) {
+  return (
+    <svg viewBox="0 0 398 312" className={className} aria-hidden>
+      <defs>
+        <linearGradient id={id} x1="360" y1="-37" x2="141" y2="383" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#00ffa3" />
+          <stop offset="1" stopColor="#dc1fff" />
+        </linearGradient>
+      </defs>
+      {SOL_BARS.map((d) => (
+        <path key={d} d={d} fill={`url(#${id})`} />
+      ))}
+    </svg>
+  );
+}
+
+export function SolCoin({ className = "" }: { className?: string }) {
+  return (
+    <div className={`grid aspect-square place-items-center rounded-full border border-white/15 bg-[radial-gradient(circle_at_35%_30%,#2a2f4a,#0b0f1f)] shadow-[0_18px_40px_-12px_rgb(220_31_255/0.45)] ${className}`} aria-hidden>
+      <SolMark className="w-[52%]" id="sol-coin" />
+    </div>
+  );
+}
