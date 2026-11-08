@@ -339,20 +339,10 @@ BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc  multisig (Squads v4, 2 of 3, 1h ti
 
 Verified-build status and a public dashboard are still on the roadmap.
 
-### 12. MEV transparency layer · Shipped (scanner), ledger publishing on the roadmap
-`tidemark sandwich --slot N --to M --rpc <mainnet RPC>` reads each block and
-flags a swap by one fee payer, a same-direction swap by someone else on the same
-pool, then the first fee payer swapping back, all in one slot. It prints each
-detection with the three signatures and the front-runner's raw gain, then a
-Merkle root over the detections so a list can be committed to later. Swaps are
-read from token balance changes, with the fee payer's native SOL counted as
-wrapped SOL and SOL amounts taken from the pool's side. Multi-hop routes and
-attackers that split signers are missed, a market maker trading both sides of
-retail flow can be flagged, and each victim is its own detection. Slots the
-cluster skipped are listed; a block the node can't serve stops the scan rather
-than leaving a gap in the root. On mainnet slot 466953008 it finds a real
-sandwich: one attacker, three victims, about 1.72 SOL gained. Publishing the daily root to the ledger is
-still on the roadmap.
+### 12. MEV transparency layer · Roadmap
+A slot scanner detects sandwich patterns (buy → victim → sell on one pool in
+one slot). It publishes a daily Merkle root of detections to the same ledger,
+so validator behaviour becomes publicly verifiable.
 
 ### 13. Isolated analysis runner · Shipped (Linux limits), partly roadmap
 `tidemark diff OLD NEW --isolate` reads both files, then reviews them in a
@@ -549,7 +539,6 @@ cargo run -p tidemark-cli -- watch <PROGRAM_ID>          # review every upgrade 
 | `proposal --multisig MS --index N` | Review a pending Squads v4 upgrade proposal before approving |
 | `census PROGRAM... [--squads MS]` | Who can upgrade each program, with Squads threshold and timelock |
 | `watch PROGRAM [--ws URL]` | Review every upgrade as it lands (websocket plus polling) |
-| `sandwich --slot N [--to M]` | Scan slots for sandwich attacks and print a Merkle root |
 
 Chain commands take `--keypair` (the signer) and an optional `--payer`.
 

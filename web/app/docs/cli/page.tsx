@@ -80,16 +80,6 @@ export default function Page() {
       </P>
       <Code>{`tidemark census 8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6 \\\n  --squads 8jGmTqcvXfp8taPTq6u5Tmorbu7pByKGDmy4eYU2xki9`}</Code>
 
-      <H2 id="sandwich">Scan for sandwiches</H2>
-      <Code>{`tidemark sandwich --slot <N> --to <M> --rpc https://api.mainnet-beta.solana.com --json found.json`}</Code>
-      <P>
-        Flags a swap, a same-direction swap by someone else on the same pool, and the first trader swapping back, all in
-        one slot, then prints a Merkle root over the detections. It reads token balance changes and counts the fee
-        payer&apos;s native SOL as wrapped SOL. Multi-hop routes are missed, and a market maker trading around retail flow can
-        be flagged. Skipped slots are listed; a rate-limited slot is retried, and a block that still can&apos;t be read
-        stops the scan rather than leaving a gap in the root.
-      </P>
-
       <H2 id="ledger">Ledger commands</H2>
       <DocTable
         head={["Command", "Purpose"]}
