@@ -3,7 +3,7 @@ import type { Ledger } from "./types";
 
 const LAYOUTS: Record<number, { attestation: number; reviewer: number; approval: number; approvalsByRegistry: boolean }> = {
   148: { attestation: 332, reviewer: 82, approval: 81, approvalsByRegistry: false },
-  188: { attestation: 380, reviewer: 82, approval: 145, approvalsByRegistry: true },
+  188: { attestation: 384, reviewer: 82, approval: 145, approvalsByRegistry: true },
 };
 
 interface Raw {

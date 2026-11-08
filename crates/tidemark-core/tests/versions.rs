@@ -73,10 +73,32 @@ fn same_build_is_clean_in_every_version() {
 }
 
 #[test]
-fn migrating_the_same_source_to_v3_is_flagged_but_not_high() {
+fn migrating_the_same_source_to_v3_is_flagged() {
     let r = compare(&vault("v1", 1), &vault("v1", 3));
     assert!(r.findings.iter().any(|f| f.id == "TM-VERSION-CHANGE"));
-    assert_eq!(r.risk, Severity::Medium, "{:?}", high(&r));
+}
+
+#[test]
+fn flipping_the_version_flag_does_not_lower_a_finding() {
+    let mut bytes = read("demo_vault_v1.so");
+    let old = load(&bytes).unwrap();
+    let at = 0x1aeb * 8 + {
+        let elf = goblin::elf::Elf::parse(&bytes).unwrap();
+        elf.section_headers
+            .iter()
+            .find(|s| elf.shdr_strtab.get_at(s.sh_name) == Some(".text"))
+            .unwrap()
+            .sh_offset as usize
+    };
+    bytes[at] = 0x05;
+    bytes[at + 1] = 0;
+    let same = compare(&old, &load(&bytes).unwrap());
+    bytes[0x30..0x34].copy_from_slice(&1u32.to_le_bytes());
+    let flipped = compare(&old, &load(&bytes).unwrap());
+    assert_eq!(flipped.new.sbpf_version, 1);
+    assert_eq!(same.risk, Severity::High);
+    assert_eq!(flipped.risk, Severity::High, "{:?}", high(&flipped));
+    assert!(high(&flipped).contains(&"TM-GUARD-GONE"));
 }
 
 #[test]

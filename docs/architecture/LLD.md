@@ -122,7 +122,7 @@ absolute branch or internal-call target and the constant, if any.
 | TM-SECTXT | security.txt added, removed or changed | Medium if removed, else Low |
 | TM-CHURN | 25%+ of instructions changed, programs of 200+ instructions | Medium |
 | TM-PARTIAL | diff deadline hit, `.rodata` window cap reached, or handler walk out of budget | Medium |
-| TM-VERSION-CHANGE | old and new SBPF versions differ; TM-BRANCH-RETARGET, TM-CALL-RETARGET and TM-GUARD-GONE are capped at Medium, and TM-KEY-ADD too unless a key was rebuilt from instructions | Medium |
+| TM-VERSION-CHANGE | old and new SBPF versions differ; nothing is downgraded, because flipping the header flag alone (v0 to v1 decode identically) must not lower a finding | Medium |
 
 **Key recovery.** Compiled Rust rarely keeps a `Pubkey` constant as 32
 contiguous bytes. It loads it as four 64-bit `lddw` immediates and either
@@ -275,7 +275,7 @@ working; clients pick the layout from the registry account (148 bytes is v2,
 |---|---|---|
 | RegistryV3 | `["registry3", seed_key]` | seed_key (the first authority, never changes), authority, pending_authority, name, count, last_hash, threshold, active_reviewers, config_version, bump |
 | Reviewer | `["reviewer", registry, key]` | registry, key, active, added_slot, bump |
-| AttestationV3 | `["attest3", registry, count_le]` | the v2 fields (registry, index, program, old/new code hash, report_hash, risk, rules_version, model_id, reviewer, slot, prev_hash, entry_hash, threshold, approvals) plus program_data, deployed_slot, config_version, bump |
+| AttestationV3 | `["attest3", registry, count_le]` | the v2 fields (registry, index, program, old/new code hash, report_hash, risk, rules_version, model_id, reviewer, slot, prev_hash, entry_hash, threshold, approvals) plus program_data, deployed_slot, config_version, elf_len, bump |
 | ApprovalV3 | `["approval", attestation, reviewer]` | registry, attestation, reviewer, slot, digest, bump |
 
 v2 used `["registry2", authority]`, so rotating the authority moved the
@@ -294,7 +294,7 @@ change, and each entry records the version it was written under.
 | `set_threshold(k)` | authority | 1 ≤ k ≤ active reviewers |
 | `propose_authority(key)` | authority | |
 | `accept_authority()` | pending authority | signer equals `pending_authority`, which is non-default |
-| `attest(args)` | reviewer, payer | active Reviewer; risk ≤ 4; `target_program` and `program_data` are owned by the upgradeable loader and the Program account names that ProgramData; SHA-256 of `program_data[45 .. 45 + elf_len]` equals `new_code_hash`; records the ProgramData slot as `deployed_slot`; creates the entry and the submitter's Approval |
+| `attest(args)` | reviewer, payer | active Reviewer; risk ≤ 4; `target_program` and `program_data` are owned by the upgradeable loader and the Program account names that ProgramData; `elf_len > 0` and SHA-256 of `program_data[45 .. 45 + elf_len]` equals `new_code_hash`; `elf_len` is stored and hashed into the entry; records the ProgramData slot as `deployed_slot`; creates the entry and the submitter's Approval |
 | `approve(digest)` | reviewer, payer | active Reviewer; entry belongs to the registry; `digest == SHA-256("tidemark/approval/v1" ‖ entry_hash)`; Approval PDA must not exist |
 
 **Deploy binding.** The attestation can only be written while the reviewed

@@ -98,6 +98,7 @@ pub mod tidemark_ledger {
         a.program_data = ctx.accounts.program_data.key();
         a.deployed_slot = deployed_slot;
         a.config_version = reg.config_version;
+        a.elf_len = args.elf_len;
         a.old_code_hash = args.old_code_hash;
         a.new_code_hash = args.new_code_hash;
         a.report_hash = args.report_hash;
@@ -164,6 +165,7 @@ fn deployed(
     elf_len: u32,
     want: &[u8; 32],
 ) -> Result<u64> {
+    require!(elf_len > 0, LedgerError::DeployedMismatch);
     require_keys_eq!(*program.owner, bpf_loader_upgradeable::id(), LedgerError::NotUpgradeable);
     require_keys_eq!(*program_data.owner, bpf_loader_upgradeable::id(), LedgerError::NotUpgradeable);
     let pdata = {
@@ -241,6 +243,7 @@ pub fn entry_hash(a: &AttestationV3) -> [u8; 32] {
         a.program_data.as_ref(),
         &a.deployed_slot.to_le_bytes(),
         &a.config_version.to_le_bytes(),
+        &a.elf_len.to_le_bytes(),
     ])
     .to_bytes()
 }
@@ -429,6 +432,7 @@ pub struct AttestationV3 {
     pub program_data: Pubkey,
     pub deployed_slot: u64,
     pub config_version: u64,
+    pub elf_len: u32,
     pub bump: u8,
 }
 

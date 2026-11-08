@@ -61,6 +61,7 @@ impl Tally {
 pub struct Judgement {
     pub backend: String,
     pub explanation: Option<String>,
+    pub explanation_error: Option<String>,
     pub questions: Vec<Tally>,
     pub risk_before: Severity,
     pub risk_after: Severity,
@@ -164,6 +165,12 @@ pub fn explain_prompt(report: &Value) -> String {
     )
 }
 
+pub fn printable(s: &str) -> String {
+    s.chars()
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
+        .collect()
+}
+
 enum Vote {
     Yes(Vec<String>),
     No,
@@ -251,10 +258,11 @@ pub fn ask_jury(backend: &dyn Backend, report: &Value) -> Vec<Tally> {
 
 pub fn judge(backend: &dyn Backend, report: &Value) -> Result<Judgement> {
     let before = Severity::parse(report["risk"].as_str().context("report has no risk")?)?;
-    let explanation = backend
-        .ask(SYSTEM, &explain_prompt(report), None)
-        .ok()
-        .map(|s| s.trim().to_string());
+    let (explanation, explanation_error) = match backend.ask(SYSTEM, &explain_prompt(report), None)
+    {
+        Ok(s) => (Some(printable(s.trim())), None),
+        Err(e) => (None, Some(e.to_string())),
+    };
     let questions = ask_jury(backend, report);
     let after = if questions.iter().any(Tally::majority_yes) {
         before.max(Severity::High)
@@ -264,6 +272,7 @@ pub fn judge(backend: &dyn Backend, report: &Value) -> Result<Judgement> {
     Ok(Judgement {
         backend: backend.name().to_string(),
         explanation,
+        explanation_error,
         questions,
         risk_before: before,
         risk_after: after,
@@ -439,6 +448,20 @@ mod tests {
         assert_eq!((t[0].yes, t[0].failed), (1, 2));
         assert_eq!(t[0].errors.len(), 2);
         assert_eq!((t[1].no, t[1].failed), (2, 1));
+    }
+
+    #[test]
+    fn model_text_cannot_carry_terminal_escapes() {
+        assert_eq!(printable("ok\u{1b}[2Jgone\nnext\u{7}"), "ok[2Jgone\nnext");
+    }
+
+    #[test]
+    fn a_failed_explanation_is_reported() {
+        let j = judge(&Scripted::new(&[]), &report("low")).unwrap();
+        assert!(j.explanation.is_none());
+        assert!(j.explanation_error.is_some());
+        assert!(j.questions.iter().all(|t| t.failed == VOTES));
+        assert_eq!(j.risk_after, Severity::Low);
     }
 
     #[test]
