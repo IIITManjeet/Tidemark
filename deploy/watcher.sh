@@ -16,10 +16,10 @@ if [ -n "${TIDEMARK_LEDGER:-}" ]; then
   [ -n "${TIDEMARK_REGISTRY:-}" ] && attest+=(--registry "$TIDEMARK_REGISTRY")
 fi
 
+mkdir -p "$DATA"
 for program in ${WATCH_PROGRAMS//,/ }; do
-  mkdir -p "$DATA/$program"
   echo "watching $program on $RPC every ${INTERVAL}s"
-  tidemark watch "$program" --rpc "$RPC" --dir "$DATA/$program" --interval "$INTERVAL" "${attest[@]}" &
+  tidemark watch "$program" --rpc "$RPC" --dir "$DATA" --interval "$INTERVAL" "${attest[@]}" &
 done
 
 wait -n
