@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchLedger, sameChain, short } from "@/lib/ledger";
 import { LEDGER_V3, REGISTRY_V3 } from "@/lib/site";
 import { RISKS, type Ledger } from "@/lib/types";
@@ -96,10 +96,19 @@ function Result({ v, rpcs }: { v: Ledger; rpcs: number }) {
   );
 }
 
-export function LedgerPanel() {
+export function LedgerPanel({ active }: { active: boolean }) {
+  const form = useRef<HTMLFormElement>(null);
+  const ran = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ v: Ledger; rpcs: number } | null>(null);
+
+  useEffect(() => {
+    if (active && !ran.current) {
+      ran.current = true;
+      form.current?.requestSubmit();
+    }
+  }, [active]);
 
   async function submit(ev: React.FormEvent<HTMLFormElement>) {
     ev.preventDefault();
@@ -130,7 +139,7 @@ export function LedgerPanel() {
         Reviews are written to a hash-linked ledger on Solana and co-signed by a quorum of reviewers. This page fetches the
         raw accounts over RPC and checks every link, address and signature count itself.
       </Hero>
-      <form onSubmit={submit} className="rounded-2xl border border-line bg-bg/60 mb-1 grid items-end gap-3.5 px-5 py-4.5 md:grid-cols-2">
+      <form ref={form} onSubmit={submit} className="rounded-2xl border border-line bg-bg/60 mb-1 grid items-end gap-3.5 px-5 py-4.5 md:grid-cols-2">
         <Field name="rpc" label="RPC" />
         <Field name="rpc2" label="Cross-check RPC" placeholder="optional second endpoint" />
         <Field name="ledger" label="Ledger program" />
