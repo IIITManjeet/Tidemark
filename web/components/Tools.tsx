@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { engine } from "@/lib/engine";
+import { CensusPanel } from "./CensusPanel";
 import { LedgerPanel } from "./LedgerPanel";
 import { ReviewPanel } from "./ReviewPanel";
 
 const TABS = [
   ["review", "Review an upgrade"],
   ["ledger", "Verify the ledger"],
+  ["census", "Who can upgrade?"],
 ] as const;
 
 type Tab = (typeof TABS)[number][0];
@@ -18,6 +20,7 @@ export function Tools() {
 
   useEffect(() => {
     if (window.location.hash === "#ledger") setTab("ledger");
+    if (window.location.hash === "#census") setTab("census");
     engine().then(
       (w) => setRules(w.rulesVersion()),
       () => setRules(""),
@@ -55,6 +58,9 @@ export function Tools() {
         </div>
         <div hidden={tab !== "ledger"}>
           <LedgerPanel active={tab === "ledger"} />
+        </div>
+        <div hidden={tab !== "census"}>
+          <CensusPanel active={tab === "census"} />
         </div>
       </div>
     </section>

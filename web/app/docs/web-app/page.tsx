@@ -20,6 +20,18 @@ export default function Page() {
         <li>with a second RPC, shows VERIFIED only if both agree on the head and every entry.</li>
       </Ul>
 
+      <H2 id="census">Who can upgrade?</H2>
+      <P>
+        Enter an RPC, one or more program ids and, optionally, Squads multisig addresses. For each program the page reads
+        the loader accounts at finalized commitment and shows:
+      </P>
+      <Ul>
+        <li>who controls upgrades: immutable, single key, multisig, governance or program-controlled,</li>
+        <li>the upgrade authority and the slot of the last deploy,</li>
+        <li>for a listed Squads v4 multisig whose vault is the authority, the threshold, voters and timelock.</li>
+      </Ul>
+      <P>A program that cannot be read shows its error in its own row and the others still load.</P>
+
       <H2 id="host">Host your own</H2>
       <Code>{`bash scripts/build-web.sh          # writes web/out/\npython -m http.server -d web/out\nBASE_PATH=/Tidemark bash scripts/build-web.sh   # for a sub-path such as GitHub Pages`}</Code>
       <P>
