@@ -16,6 +16,7 @@ const RULES: [string, string, string][] = [
   ["TM-GUARD-GONE", "High", "A branch into an error path became a plain jump, falls straight through, or was deleted, so the check can't fail"],
   ["TM-BRANCH-RETARGET", "High", "A branch that looks unchanged now jumps somewhere else"],
   ["TM-CALL-RETARGET", "High", "A call that looks unchanged now calls a different function"],
+  ["TM-TARGET-SWAP", "Medium", "Branch or call targets only trade places with each other, which compiler reordering usually causes"],
   ["TM-SYSCALL-ADD", "High / Low / Info", "New invoke_signed call sites are High; other sensitive syscalls Low"],
   ["TM-IX-CHANGE", "Medium / Low", "Instruction handlers added (Medium) or removed (Low), named from the Anchor dispatch table"],
   ["TM-ERR-GONE", "Medium", "A handler lost custom error checks (require!, codes 6000+)"],
@@ -33,7 +34,7 @@ export default function Page() {
   return (
     <DocPage
       title="Risk rules"
-      lead="Deterministic, versioned rules turn a bytecode diff into ranked findings. The current set is tm-rules-0.6."
+      lead="Deterministic, versioned rules turn a bytecode diff into ranked findings. The current set is tm-rules-0.7."
     >
       <H2 id="table">Every rule</H2>
       <DocTable

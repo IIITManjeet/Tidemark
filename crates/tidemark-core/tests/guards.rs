@@ -88,3 +88,14 @@ fn real_upgrades_do_not_trip_the_guard_rule_both_ways() {
     assert!(!guard_gone(&v2, &v1));
     assert!(!guard_gone(&v1, &v1));
 }
+
+#[test]
+fn a_branch_that_already_fell_through_is_not_a_removed_guard() {
+    let mut bytes = read("demo_vault_v1.so");
+    for pc in HAS_ONE_LIMBS {
+        set_off(&mut bytes, pc, 0);
+    }
+    let p = load(&bytes).unwrap();
+    let report = compare(&p, &load(&bytes).unwrap());
+    assert!(report.findings.is_empty(), "{:?}", report.findings);
+}

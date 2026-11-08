@@ -4,7 +4,7 @@ export const LEDGER_V2 = "BFZg7MYzVzz1YypfmF2B6p842CXx33SBFGmSGep2TLLc";
 export const REGISTRY_V2 = "72HSqJR6Y2uiedNWVQxDDRXYr9LjB4cDUn3Me2AtenxU";
 export const LEDGER_V3 = "8f43wqFP4wZ8NLrJgBrGXDrXp92FgxSvM9Ng21GrgPq6";
 export const DEMO_PROGRAM = "5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3";
-export const RULES = "tm-rules-0.6";
+export const RULES = "tm-rules-0.7";
 
 export const explorer = (key: string) => `https://explorer.solana.com/address/${key}?cluster=devnet`;
 

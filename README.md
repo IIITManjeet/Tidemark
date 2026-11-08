@@ -14,7 +14,7 @@ is, and writes every review to a public, hash-linked ledger on Solana.
 
 ```
 $ tidemark diff fixtures/demo_vault_v1.so fixtures/demo_vault_v2.so
-Tidemark upgrade review  (tm-rules-0.6)
+Tidemark upgrade review  (tm-rules-0.7)
   old  99e7c4fe98f886be  20066 insns
   new  519015fa4879499f  20608 insns
   changed instructions: 996 (2.45%)
@@ -64,7 +64,7 @@ what keeps Tidemark useful after the switch.
 - Extracts `.rodata` strings, candidate 32-byte keys and `security.txt` from both versions.
 
 ### 2. Upgrade risk rules · Shipped
-Deterministic, versioned rules (`tm-rules-0.6`) turn a diff into ranked findings:
+Deterministic, versioned rules (`tm-rules-0.7`) turn a diff into ranked findings:
 
 | Rule | What it catches |
 |---|---|
@@ -77,6 +77,7 @@ Deterministic, versioned rules (`tm-rules-0.6`) turn a diff into ranked findings
 | `TM-CALLX-ADD` | New indirect calls with runtime-computed targets |
 | `TM-BRANCH-RETARGET` | A branch that looks unchanged now jumps to different code |
 | `TM-CALL-RETARGET` | A call that looks unchanged now calls a different function |
+| `TM-TARGET-SWAP` | Branch or call targets that only trade places with each other: usually compiler reordering, reported as Medium |
 | `TM-KEY-SPLIT` | Four or more new high-entropy 64-bit constants within a few hundred instructions: a key loaded in pieces that the stricter key rebuild did not match |
 | `TM-CONST-CHANGE` | 64-bit constants (not addresses, not handler discriminators) that are no longer used |
 | `TM-CONST-ADD` | New 64-bit constants (informational) |
@@ -236,7 +237,7 @@ each review on the ledger, using the same path as `tidemark attest`.
 $ tidemark watch 5pHTptDKd3fS6vnx82rHxSH1xURrYacDr17uJhnc7aX3
 5pHTpt…: baseline snapshot at slot 519447118
 5pHTpt…: upgraded, slot 519447118 -> 519503311
-Tidemark upgrade review  (tm-rules-0.6) …
+Tidemark upgrade review  (tm-rules-0.7) …
 ```
 
 The watcher needs to be running before an upgrade to have the old version;
@@ -435,6 +436,7 @@ bash scripts/build-fixtures.sh      # on-chain programs + demo fixtures (Solana 
   npm, CI gate, rules, ledger, AI judge, and the security model. Build it with
   `bash scripts/build-web.sh` and open `web/out/index.html` through any static
   server.
+- [Testing on real programs](docs/TESTING.md): 67 mainnet programs, determinism and web/CLI parity
 - [Releasing](docs/RELEASING.md): npm, VS Code Marketplace, Open VSX, Vercel and Railway
 - [High-level design](docs/architecture/HLD.md)
 - [Low-level design](docs/architecture/LLD.md)
