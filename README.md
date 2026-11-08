@@ -34,6 +34,15 @@ from `contracts/programs/demo-vault`. Tidemark recovers the attacker's address
 byte for byte, spots that `withdraw` lost its `has_one` and signer checks and names the new `sweep`
 handler, all from bytecode alone.
 
+## Get it
+
+| | |
+|---|---|
+| Web app | https://tidemark-sol.vercel.app (runs in your browser; no install) |
+| CLI | download for Linux, macOS or Windows from the [v0.1.0 release](https://github.com/IIITManjeet/Tidemark/releases/tag/v0.1.0), or `cargo install --git https://github.com/IIITManjeet/Tidemark tidemark-cli` |
+| npm | `npm install tidemark-wasm` |
+| VS Code | download `tidemark.vsix` from the [v0.1.0 release](https://github.com/IIITManjeet/Tidemark/releases/tag/v0.1.0), then Extensions → ⋯ → Install from VSIX… |
+
 ---
 
 ## Features
@@ -288,14 +297,15 @@ keys never share a process with untrusted input.
   `tidemark diff --json`, `inspect(bytes)` lists syscalls and handlers, and
   `fetchLedger(rpc, ledger, registry)` pulls the ledger accounts over JSON-RPC
   and verifies the whole chain in the browser. CI builds the package and checks
-  it against the CLI's demo report. Not published to the npm registry yet.
+  it against the CLI's demo report. Published as
+  [`tidemark-wasm`](https://www.npmjs.com/package/tidemark-wasm).
 - **VS Code extension** (`vscode/`, Shipped): *Tidemark: Review a build
   against the deployed program* fetches the program over RPC (setting
   `tidemark.rpc`) and reviews your local `.so` against it before you run
   `anchor deploy`; *Review two program binaries* compares any two files. The
   report goes to a Tidemark output channel, with a warning when risk reaches
-  `tidemark.warnAt`. Build with `bash scripts/build-vscode.sh`; not on the
-  Marketplace yet.
+  `tidemark.warnAt`. Install `tidemark.vsix` from the v0.1.0 release (the
+  Marketplace listing is awaiting review), or build with `bash scripts/build-vscode.sh`.
 - Showing findings inline in the editor is still on the roadmap.
 
 ### 15. Web app · Shipped (diff viewer and ledger feed)

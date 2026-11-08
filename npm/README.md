@@ -5,6 +5,10 @@ program binaries (sBPF ELF), runs the `tm-rules` risk rules and checks a
 Tidemark attestation ledger, all locally in the browser or Node. Nothing is
 uploaded anywhere.
 
+```bash
+npm install tidemark-wasm
+```
+
 ```js
 import init, { review, inspect } from "tidemark-wasm";
 import { fetchLedger } from "tidemark-wasm/ledger.js";
